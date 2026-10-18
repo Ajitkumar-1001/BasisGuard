@@ -3,7 +3,7 @@ import type { RuntimeConfig } from "@basisguard/core";
 import { createRun, type Db, getRun, listRunEvents, listRuns, providerArtifacts, runSpend } from "@basisguard/db/runtime";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { apiError, withInternalErrors } from "./http";
+import { apiError, guardApiRequest, withInternalErrors } from "./http";
 
 export type WebRuntime = { config: RuntimeConfig; db: Db };
 const Uuid = z.uuid();
@@ -59,6 +59,9 @@ async function readBoundedJson(req: Request, limit: number): Promise<BodyRead> {
 
 export async function handleCreateRun(req: Request, rt: WebRuntime): Promise<Response> {
   return withInternalErrors(async (requestId) => {
+    // Header checks first: a forged cross-site or rebinding request is refused before anything else.
+    const denied = guardApiRequest(req, requestId, { stateChanging: true });
+    if (denied) return denied;
     // Checked before the body is read: replay never parses or writes.
     if (rt.config.mode === "replay") return apiError(403, "replay_read_only", "replay mode is read-only", requestId);
     const body = await readBoundedJson(req, MAX_BODY_BYTES);

@@ -1,5 +1,5 @@
 import { handleCreateRun, handleListRuns } from "@/server/handlers";
-import { withInternalErrors } from "@/server/http";
+import { guardApiRequest, withInternalErrors } from "@/server/http";
 import { getRuntime } from "@/server/runtime";
 
 export async function POST(request: Request) {
@@ -7,5 +7,7 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  return withInternalErrors(async () => handleListRuns(new URL(request.url), await getRuntime()));
+  return withInternalErrors(async (requestId) =>
+    guardApiRequest(request, requestId, { stateChanging: false }) ?? handleListRuns(new URL(request.url), await getRuntime()),
+  );
 }

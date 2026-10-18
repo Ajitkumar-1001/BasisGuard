@@ -174,7 +174,7 @@ describe("request body bound (64 KiB)", () => {
     const stream = new ReadableStream<Uint8Array>({
       pull(c) { pulled += chunk.byteLength; c.enqueue(chunk); }, // never ends: an unbounded reader would hang
     });
-    const req = new Request("http://127.0.0.1/api/runs", { method: "POST", body: stream, duplex: "half" } as RequestInit);
+    const req = new Request("http://127.0.0.1/api/runs", { method: "POST", headers: { "content-type": "application/json" }, body: stream, duplex: "half" } as RequestInit);
     const r = await handleCreateRun(req, rt);
     expect(r.status).toBe(413);
     expect(await r.json()).toMatchObject({ code: "payload_too_large" });
@@ -234,5 +234,33 @@ describe("internal error logging", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("POST /api/runs cross-origin protection", () => {
+  it("415 for a text/plain body that contains valid JSON (CORS simple request), with no write", async () => {
+    const req = new Request("http://127.0.0.1/api/runs", { method: "POST", headers: { "content-type": "text/plain" }, body: JSON.stringify(body()) });
+    const r = await handleCreateRun(req, rt);
+    expect(r.status).toBe(415);
+    expect(await r.json()).toMatchObject({ code: "unsupported_media_type", requestId: expect.any(String) });
+    expect(req.bodyUsed).toBe(false);
+    expect(await h.db.select().from(researchRuns)).toHaveLength(0);
+  });
+
+  it("403 forbidden_origin for a cross-site Origin, with no write", async () => {
+    const req = new Request("http://127.0.0.1/api/runs", {
+      method: "POST", headers: { "content-type": "application/json", origin: "https://evil.example.com", "sec-fetch-site": "cross-site" }, body: JSON.stringify(body()),
+    });
+    const r = await handleCreateRun(req, rt);
+    expect(r.status).toBe(403);
+    expect(await r.json()).toMatchObject({ code: "forbidden_origin", requestId: expect.any(String) });
+    expect(req.bodyUsed).toBe(false);
+    expect(await h.db.select().from(researchRuns)).toHaveLength(0);
+  });
+
+  it("403 forbidden_origin for a rebinding Host header", async () => {
+    const req = new Request("http://127.0.0.1/api/runs", { method: "POST", headers: { "content-type": "application/json", host: "evil.example.com:3100" }, body: JSON.stringify(body()) });
+    expect((await handleCreateRun(req, rt)).status).toBe(403);
+    expect(await h.db.select().from(researchRuns)).toHaveLength(0);
   });
 });

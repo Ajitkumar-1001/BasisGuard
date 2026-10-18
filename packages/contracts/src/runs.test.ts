@@ -75,4 +75,8 @@ describe("ApiErrorCode", () => {
   it("includes payload_too_large for oversized request bodies (413)", () => {
     expect(ApiErrorCode.parse("payload_too_large")).toBe("payload_too_large");
   });
+  it("includes the request-guard codes (403 forbidden_origin, 415 unsupported_media_type)", () => {
+    expect(ApiErrorCode.parse("forbidden_origin")).toBe("forbidden_origin");
+    expect(ApiErrorCode.parse("unsupported_media_type")).toBe("unsupported_media_type");
+  });
 });

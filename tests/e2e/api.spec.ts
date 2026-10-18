@@ -33,3 +33,18 @@ test("there is no retry endpoint", async ({ request }) => {
   const { runId } = await (await request.post("/api/runs", { data: body(crypto.randomUUID()) })).json();
   expect([404, 405]).toContain((await request.post(`/api/runs/${runId}/retry`)).status());
 });
+
+test("cross-origin and rebinding requests are refused over real HTTP, with no run created", async ({ request }) => {
+  const key = crypto.randomUUID();
+  const plain = await request.post("/api/runs", { headers: { "content-type": "text/plain" }, data: JSON.stringify(body(key)) });
+  expect(plain.status()).toBe(415);
+  expect((await plain.json()).code).toBe("unsupported_media_type");
+  const crossSite = await request.post("/api/runs", { headers: { origin: "https://evil.example.com", "sec-fetch-site": "cross-site" }, data: body(key) });
+  expect(crossSite.status()).toBe(403);
+  expect((await crossSite.json()).code).toBe("forbidden_origin");
+  const rebound = await request.get("/api/runs", { headers: { host: "evil.example.com:3100" } });
+  expect(rebound.status()).toBe(403);
+  expect((await rebound.json()).code).toBe("forbidden_origin");
+  // None of the refused POSTs created the run: the key is still unused.
+  expect((await request.post("/api/runs", { data: body(key) })).status()).toBe(202);
+});
