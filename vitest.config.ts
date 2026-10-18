@@ -13,6 +13,7 @@ export default defineConfig({
       "scripts/**/*.test.ts",
     ],
     setupFiles: ["tests/setup/network-deny.mjs"],
+    globalSetup: ["tests/setup/test-db.ts"],
     fileParallelism: false,
     env: {
       NODE_ENV: "test",
