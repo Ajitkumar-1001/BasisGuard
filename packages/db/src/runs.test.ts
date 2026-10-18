@@ -63,6 +63,18 @@ describe("createRun (FR-01)", () => {
     expect(await h.db.select().from(jobQueue)).toHaveLength(1);
     expect(await h.db.select().from(runEvents).where(eq(runEvents.eventType, "run_created"))).toHaveLength(1);
   });
+
+  it("gives exactly one creator and idempotency conflicts to concurrent same-key/different-body submissions", async () => {
+    const bodies = ["A Corp", "B Corp", "C Corp", "D Corp", "E Corp", "F Corp"];
+    const results = await Promise.all(bodies.map((company_name) => createRun(h.db, req({ company_name }), NOW)));
+    const created = results.filter((r) => r.kind === "created");
+    expect(created).toHaveLength(1);
+    expect(results.filter((r) => r.kind !== "created").every((r) => r.kind === "conflict")).toBe(true);
+    expect(new Set(results.map((r) => r.runId))).toEqual(new Set([created[0]!.runId]));
+    expect(await h.db.select().from(researchRuns)).toHaveLength(1);
+    expect(await h.db.select().from(jobQueue)).toHaveLength(1);
+    expect(await h.db.select().from(runEvents)).toHaveLength(1);
+  });
 });
 
 describe("transitionRun", () => {
@@ -81,6 +93,45 @@ describe("transitionRun", () => {
     const run = await getRun(h.db, runId);
     expect(run?.completedAt).toBeInstanceOf(Date);
     expect(run?.errorCode).toBe("deadline_exceeded");
+  });
+
+  it("is a no-op returning false when `from` is terminal (failed -> failed)", async () => {
+    const { runId } = await createRun(h.db, req(), NOW);
+    await transitionRun(h.db, runId, "queued", "failed", { errorCode: "deadline_exceeded" }, { type: "run_failed" });
+    const before = await getRun(h.db, runId);
+    const eventsBefore = await listRunEvents(h.db, runId);
+    expect(await transitionRun(h.db, runId, "failed", "failed", { errorCode: "other" }, { type: "run_failed_again" })).toBe(false);
+    const after = await getRun(h.db, runId);
+    expect(after?.completedAt).toEqual(before?.completedAt);
+    expect(after?.errorCode).toBe("deadline_exceeded");
+    expect(after?.updatedAt).toEqual(before?.updatedAt);
+    expect(await listRunEvents(h.db, runId)).toHaveLength(eventsBefore.length);
+  });
+
+  it("never lets event.details override the from/to audit fields", async () => {
+    const { runId } = await createRun(h.db, req(), NOW);
+    await transitionRun(h.db, runId, "queued", "submitting", {}, { type: "task_submitting", details: { from: "x", to: "y", note: "kept" } });
+    expect((await listRunEvents(h.db, runId)).at(-1)?.detailsJson).toEqual({ from: "queued", to: "submitting", note: "kept" });
+  });
+
+  it("is atomic on a bare Db: a failing event insert leaves the status unchanged", async () => {
+    const { runId } = await createRun(h.db, req(), NOW);
+    // Postgres jsonb rejects the \u0000 escape, so the event INSERT fails deterministically after the UPDATE.
+    await expect(
+      transitionRun(h.db, runId, "queued", "submitting", {}, { type: "task_submitting", details: { bad: "nul\u0000byte" } }),
+    ).rejects.toThrow();
+    expect((await getRun(h.db, runId))?.status).toBe("queued");
+    expect((await listRunEvents(h.db, runId)).map((e) => e.eventType)).toEqual(["run_created"]);
+  });
+
+  it("is atomic inside a caller transaction too (rolls back with it)", async () => {
+    const { runId } = await createRun(h.db, req(), NOW);
+    await expect(
+      h.db.transaction(async (tx) => {
+        await transitionRun(tx, runId, "queued", "submitting", {}, { type: "task_submitting", details: { bad: "nul\u0000byte" } });
+      }),
+    ).rejects.toThrow();
+    expect((await getRun(h.db, runId))?.status).toBe("queued");
   });
 
   it("appendRunEvent records arbitrary audit events", async () => {

@@ -1,4 +1,5 @@
 import { and, asc, desc, eq } from "drizzle-orm";
+import { PgTransaction } from "drizzle-orm/pg-core";
 import { type CreateRunRequest, isTerminalRunStatus, type RunStatus, StoredRunInput } from "@basisguard/contracts";
 import { contentHash } from "@basisguard/core";
 import type { Db, DbOrTx } from "./client";
@@ -63,24 +64,38 @@ export async function getRun(db: DbOrTx, id: string): Promise<RunRow | undefined
   return row;
 }
 
-/** Compare-and-set status transition; appends an event only when the CAS succeeded. */
+/**
+ * Compare-and-set status transition; appends an event only when the CAS succeeded.
+ *
+ * - Terminal `from` (complete, needs_review, failed): returns false without touching the DB, so a
+ *   terminal->same-terminal call can never rewrite completed_at/error_code or append a duplicate event.
+ * - Atomicity: the status UPDATE and the event INSERT always commit or roll back together. When given a
+ *   bare `Db` the body runs in its own transaction; when given a `Tx` it joins the caller's transaction
+ *   (and rolls back with it).
+ * - Event details: `event.details` is spread first and `patch` / `from` / `to` after, so caller details
+ *   can never override the audit fields.
+ */
 export async function transitionRun(
-  tx: DbOrTx,
+  db: DbOrTx,
   runId: string,
   from: RunStatus,
   to: RunStatus,
   patch: { errorCode?: string; providerRunId?: string; sourceTaskArtifactId?: string; rateCardSha256?: string },
   event: { type: string; details?: Record<string, unknown> },
 ): Promise<boolean> {
-  const now = new Date();
-  const updated = await tx
-    .update(researchRuns)
-    .set({ ...patch, status: to, updatedAt: now, ...(isTerminalRunStatus(to) ? { completedAt: now } : {}) })
-    .where(and(eq(researchRuns.id, runId), eq(researchRuns.status, from)))
-    .returning({ id: researchRuns.id });
-  if (updated.length === 0) return false;
-  await tx.insert(runEvents).values({ runId, eventType: event.type, detailsJson: { from, to, ...patch, ...event.details } });
-  return true;
+  if (isTerminalRunStatus(from)) return false;
+  const body = async (tx: DbOrTx): Promise<boolean> => {
+    const now = new Date();
+    const updated = await tx
+      .update(researchRuns)
+      .set({ ...patch, status: to, updatedAt: now, ...(isTerminalRunStatus(to) ? { completedAt: now } : {}) })
+      .where(and(eq(researchRuns.id, runId), eq(researchRuns.status, from)))
+      .returning({ id: researchRuns.id });
+    if (updated.length === 0) return false;
+    await tx.insert(runEvents).values({ runId, eventType: event.type, detailsJson: { ...event.details, ...patch, from, to } });
+    return true;
+  };
+  return db instanceof PgTransaction ? body(db) : db.transaction(body);
 }
 
 export async function appendRunEvent(tx: DbOrTx, runId: string, type: string, details: Record<string, unknown> = {}): Promise<void> {
