@@ -8,10 +8,15 @@ export function NewRunForm() {
   // One key per mount, minted on first submit (not during render: cacheComponents prerenders this form);
   // retries and double-clicks reuse it (FR-01). A refresh mounts a new form/key.
   const requestKey = useRef<string | null>(null);
-  const [asOf, setAsOf] = useState("");
+  // The date defaults to today (UTC) on the client only (a server prerender would bake in a stale date). The input
+  // stays uncontrolled and is filled through a ref after mount, so no setState-in-effect and no hydration mismatch.
+  const asOfInput = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => setAsOf(new Date().toISOString().slice(0, 10)), []);
+  useEffect(() => {
+    const el = asOfInput.current;
+    if (el && !el.value) el.value = new Date().toISOString().slice(0, 10);
+  }, []);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -54,7 +59,7 @@ export function NewRunForm() {
       </label>
       <label className="block">
         <span className="text-sm font-medium">As-of date (UTC)</span>
-        <input name="as_of_date" type="date" required value={asOf} onChange={(e) => setAsOf(e.target.value)} className="mt-1 rounded border px-2 py-1" />
+        <input name="as_of_date" type="date" required ref={asOfInput} className="mt-1 rounded border px-2 py-1" />
       </label>
       <fieldset className="space-y-1">
         <legend className="text-sm font-medium">Policy</legend>
