@@ -20,7 +20,6 @@ async function main(): Promise<number> {
   const price = card.task_usd_per_run[args.processor];
   console.warn(`PAID CALL: 1 Task run, processor=${args.processor}, conservative max USD ${price} (rate card ${card.version}, sha256 ${sha256.slice(0, 12)}). Billed only if the run completes.`);
 
-  await acquireProbeLock(".gate-a");
   const client = new Parallel({ apiKey, maxRetries: 0, timeout: 90_000 }); // D-005; HTTP timeout must exceed result({ timeout: 60 }) s
   const request = buildTaskRunCreateRequest({
     companyName: args.companyName, officialDomain: args.officialDomain, profileVersion: "startup_facts_v1",
@@ -29,6 +28,7 @@ async function main(): Promise<number> {
   const statuses: unknown[] = [];
   const record: Record<string, unknown> = { startedAt: new Date().toISOString(), sdk: "parallel-web@1.3.5", rateCard: card.version, request, statuses };
   const deadline = Date.now() + args.timeoutMs;
+  await acquireProbeLock(".gate-a"); // taken only once everything is built, immediately before the paid create
   try {
     const run = await client.taskRun.create(request);
     record.createResponse = run;

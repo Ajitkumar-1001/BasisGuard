@@ -23,6 +23,15 @@ describe("gate-a probe args", () => {
   });
 });
 
+describe("gate-a probe timeout validation", () => {
+  it.each(["abc", "0", "-1", "Infinity"])("rejects --timeout-minutes %s", (v) => {
+    expect(() => parseProbeArgs(["--timeout-minutes", v], "2026-10-17")).toThrow(/timeout-minutes/);
+  });
+  it("accepts a valid value", () => {
+    expect(parseProbeArgs(["--timeout-minutes", "2.5"], "2026-10-17").timeoutMs).toBe(150_000);
+  });
+});
+
 describe("gate-a probe lock", () => {
   it("allows exactly one probe per lock directory", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gate-a-"));

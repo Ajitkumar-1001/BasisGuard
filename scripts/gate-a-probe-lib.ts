@@ -26,7 +26,13 @@ export function parseProbeArgs(argv: string[], today: string): ProbeArgs {
         out.processor = p.data;
         break;
       }
-      case "--timeout-minutes": out.timeoutMs = Number(next()) * 60_000; break;
+      case "--timeout-minutes": {
+        const raw = next();
+        const minutes = Number(raw);
+        if (!Number.isFinite(minutes) || minutes <= 0) throw new Error(`invalid --timeout-minutes: ${raw} (expected a finite number > 0)`);
+        out.timeoutMs = minutes * 60_000;
+        break;
+      }
       default: throw new Error(`unknown argument: ${flag}`);
     }
   }
