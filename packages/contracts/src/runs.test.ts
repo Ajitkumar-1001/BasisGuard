@@ -11,7 +11,7 @@ const valid = {
 describe("CreateRunRequest (FR-01)", () => {
   it("applies documented defaults", () => {
     expect(CreateRunRequest.parse(valid)).toMatchObject({
-      processor: "base", max_provider_calls: 12, max_estimated_usd: "5.00", deadline_minutes: 30,
+      processor: "base", max_provider_calls: 12, max_estimated_usd: "5.000000", deadline_minutes: 30,
     });
   });
 
@@ -38,6 +38,23 @@ describe("CreateRunRequest (FR-01)", () => {
     expect(CreateRunRequest.safeParse({ ...valid, max_estimated_usd: "5.000001" }).success).toBe(false);
     expect(CreateRunRequest.safeParse({ ...valid, max_estimated_usd: 5 }).success).toBe(false);
     expect(CreateRunRequest.safeParse({ ...valid, max_provider_calls: 13 }).success).toBe(false);
+  });
+
+  it("never throws on malformed max_estimated_usd and accepts the exact cap", () => {
+    for (const bad of ["abc", "-1", "1e3", ""]) {
+      expect(() => CreateRunRequest.safeParse({ ...valid, max_estimated_usd: bad })).not.toThrow();
+      expect(CreateRunRequest.safeParse({ ...valid, max_estimated_usd: bad }).success).toBe(false);
+    }
+    expect(CreateRunRequest.safeParse({ ...valid, max_estimated_usd: "5.00" }).success).toBe(true);
+  });
+
+  it("canonicalizes max_estimated_usd to 6 decimal places", () => {
+    for (const v of ["5", "5.0", "05.00"]) {
+      expect(CreateRunRequest.parse({ ...valid, max_estimated_usd: v }).max_estimated_usd).toBe("5.000000");
+    }
+    expect(CreateRunRequest.parse(valid).max_estimated_usd).toBe("5.000000");
+    const { request_key: _k, ...rest } = CreateRunRequest.parse(valid);
+    expect(StoredRunInput.parse({ ...rest, as_of_date: "2026-10-17", max_estimated_usd: "5" }).max_estimated_usd).toBe("5.000000");
   });
 
   it("rejects unknown fields, unknown policies, profiles and non-UUID keys", () => {

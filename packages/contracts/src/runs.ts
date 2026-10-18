@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Policy, Processor, type RunStatus } from "./enums";
-import { UsdDecimal, usdToMicros } from "./money";
+import { UsdDecimal, microsToUsd, usdToMicros } from "./money";
 
 export const MAX_RUN_USD = "5.00";
 
@@ -18,7 +18,14 @@ const RunFields = {
   processor: Processor.default("base"),
   policy: Policy,
   max_provider_calls: z.number().int().min(1).max(12).default(12),
-  max_estimated_usd: UsdDecimal.refine((v) => usdToMicros(v) <= usdToMicros(MAX_RUN_USD), `must be ≤ ${MAX_RUN_USD}`).default(MAX_RUN_USD),
+  // pipe() so the cap check only runs once the regex passed (usdToMicros throws on malformed input).
+  // Canonical 6-dp form keeps equal budgets byte-identical for request-body hashing.
+  // Zod 4 .default() bypasses transforms, so the default is supplied pre-canonicalized.
+  max_estimated_usd: UsdDecimal.pipe(
+    z.string()
+      .refine((v) => usdToMicros(v) <= usdToMicros(MAX_RUN_USD), `must be ≤ ${MAX_RUN_USD}`)
+      .transform((v) => microsToUsd(usdToMicros(v))),
+  ).default(microsToUsd(usdToMicros(MAX_RUN_USD))),
   deadline_minutes: z.number().int().min(1).max(120).default(30),
 };
 
