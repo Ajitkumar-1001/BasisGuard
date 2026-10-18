@@ -1,0 +1,8 @@
+packages:
+  - frontend
+  - apps/*
+  - packages/*
+allowBuilds:
+  esbuild: false
+  sharp: false
+  unrs-resolver: false

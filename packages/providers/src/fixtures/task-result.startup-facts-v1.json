@@ -1,0 +1,41 @@
+{
+  "run": {
+    "run_id": "__PROVIDER_RUN_ID__",
+    "interaction_id": "fx-interaction",
+    "status": "completed",
+    "is_active": false,
+    "processor": "base",
+    "created_at": "2026-10-17T00:00:00Z",
+    "modified_at": "2026-10-17T00:01:00Z",
+    "metadata": null,
+    "error": null,
+    "warnings": null
+  },
+  "output": {
+    "type": "json",
+    "content": {
+      "company_name": "Example Corp",
+      "official_website": "https://example.com",
+      "headquarters": "San Francisco, California, USA",
+      "founding_year": 2020,
+      "founders": ["Example Founder A", "Example Founder B"],
+      "latest_funding": { "round": "Series A", "amount_usd": 25000000, "announced_on": "2026-06-01" }
+    },
+    "basis": [
+      { "field": "official_website", "reasoning": "Synthetic fixture basis.", "confidence": "high",
+        "citations": [{ "url": "https://example.com/about", "title": "About Example Corp", "excerpts": ["Example Corp's official site is example.com."] }] },
+      { "field": "headquarters", "reasoning": "Synthetic fixture basis.", "confidence": "medium",
+        "citations": [{ "url": "https://example.com/contact", "title": "Contact", "excerpts": ["Our headquarters are in San Francisco, California."] }] },
+      { "field": "founding_year", "reasoning": "Synthetic fixture basis.", "confidence": "high",
+        "citations": [{ "url": "https://example.com/about", "title": "About Example Corp", "excerpts": ["Example Corp was founded in 2020."] }] },
+      { "field": "founders", "reasoning": "Synthetic fixture basis.", "confidence": "medium",
+        "citations": [{ "url": "https://example.com/team", "title": "Team", "excerpts": ["Founded by Example Founder A and Example Founder B."] }] },
+      { "field": "founders.0", "reasoning": "Synthetic fixture basis.", "confidence": "medium",
+        "citations": [{ "url": "https://example.com/team", "title": "Team", "excerpts": ["Example Founder A, co-founder and CEO."] }] },
+      { "field": "founders.1", "reasoning": "Synthetic fixture basis.", "confidence": "low",
+        "citations": [{ "url": "https://example.com/team", "title": "Team", "excerpts": ["Example Founder B, co-founder."] }] },
+      { "field": "latest_funding", "reasoning": "Synthetic fixture basis.", "confidence": "medium",
+        "citations": [{ "url": "https://example.com/news/series-a", "title": "Series A", "excerpts": ["On June 1, 2026 Example Corp announced a $25 million Series A."] }] }
+    ]
+  }
+}
