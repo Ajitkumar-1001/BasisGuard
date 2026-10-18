@@ -26,7 +26,8 @@ export async function createDb(url: string, opts: DbGuardOptions): Promise<DbHan
     assertDatabaseAllowed(databaseName, opts);
     return { db: drizzle(client, { schema }), databaseName, close: () => client.end() };
   } catch (e) {
-    await client.end();
+    // A failing close must not replace the guard/connect error the caller needs to see.
+    await client.end().catch(() => {});
     throw e;
   }
 }
