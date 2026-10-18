@@ -10,7 +10,11 @@ export type RuntimeConfig =
 export function loadRuntimeConfig(env: Record<string, string | undefined>): RuntimeConfig {
   const mode = RuntimeMode.safeParse(env.BASISGUARD_MODE);
   if (!mode.success) throw new ConfigError("BASISGUARD_MODE must be exactly one of: live, fixture, replay");
-  const hosted = env.HOSTED === "true";
+  const hostedRaw = env.HOSTED;
+  if (hostedRaw !== undefined && hostedRaw !== "" && hostedRaw !== "true" && hostedRaw !== "false") {
+    throw new ConfigError("HOSTED must be 'true' or 'false'");
+  }
+  const hosted = hostedRaw === "true";
   if (hosted && mode.data !== "replay") throw new ConfigError("HOSTED=true requires BASISGUARD_MODE=replay");
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) throw new ConfigError("DATABASE_URL is required");
@@ -19,7 +23,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
   if (mode.data === "replay") return { ...common, mode: "replay" };
 
   if (mode.data === "live") {
-    const missing = ["PARALLEL_API_KEY", "OPENAI_API_KEY"].filter((k) => !env[k]);
+    const missing = ["PARALLEL_API_KEY", "OPENAI_API_KEY"].filter((k) => !env[k]?.trim());
     if (missing.length) throw new ConfigError(`live mode refuses to start without ${missing.join(", ")}`);
   }
   const rateCardPath = env.BASISGUARD_RATE_CARD;

@@ -43,4 +43,20 @@ describe("loadRuntimeConfig", () => {
     expect(() => loadRuntimeConfig({ BASISGUARD_MODE: "fixture", DATABASE_URL: DB })).toThrow(/BASISGUARD_RATE_CARD/);
     expect(loadRuntimeConfig({ BASISGUARD_MODE: "replay", DATABASE_URL: DB }).mode).toBe("replay");
   });
+
+  it("parses HOSTED strictly and fails closed on ambiguous values", () => {
+    for (const hosted of ["TRUE", "1", "yes", "true "]) {
+      expect(() => loadRuntimeConfig({ BASISGUARD_MODE: "replay", HOSTED: hosted, DATABASE_URL: DB })).toThrow(ConfigError);
+    }
+    for (const hosted of [undefined, "", "false"]) {
+      expect(loadRuntimeConfig({ BASISGUARD_MODE: "replay", HOSTED: hosted, DATABASE_URL: DB })).toMatchObject({ hosted: false });
+    }
+  });
+
+  it("live rejects whitespace-only keys and names only the missing key", () => {
+    const base = { BASISGUARD_MODE: "live", DATABASE_URL: DB, BASISGUARD_RATE_CARD: RATE };
+    expect(() => loadRuntimeConfig({ ...base, PARALLEL_API_KEY: " ", OPENAI_API_KEY: "k" })).toThrow(ConfigError);
+    expect(() => loadRuntimeConfig({ ...base, PARALLEL_API_KEY: " ", OPENAI_API_KEY: "k" })).toThrow(/without PARALLEL_API_KEY$/);
+    expect(() => loadRuntimeConfig({ ...base, PARALLEL_API_KEY: "k" })).toThrow(/without OPENAI_API_KEY$/);
+  });
 });
