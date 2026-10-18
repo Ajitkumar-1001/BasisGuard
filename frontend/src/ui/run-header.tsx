@@ -1,7 +1,7 @@
 import type { RunView } from "@/ui/view-models";
 import { DASH } from "./format";
 import { HashChip } from "./hash-chip";
-import { RUN_STATUS_META } from "./status";
+import { FIELD_STATE_META, RUN_STATUS_META } from "./status";
 import { StatusBadge } from "./status-badge";
 
 type RunHeaderProps = Pick<
@@ -35,6 +35,7 @@ export function RunHeader(props: RunHeaderProps) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <h1 className="min-w-0 break-words text-2xl font-semibold text-ink">{company || DASH}</h1>
         <StatusBadge meta={RUN_STATUS_META[status]} code={status} codeTestId="run-status" />
+        {policy === "baseline" ? <StatusBadge meta={FIELD_STATE_META.unverified} code="unverified" /> : null}
         {errorCode ? (
           <span className="inline-flex items-center gap-2 text-xs text-ink-muted">
             Error

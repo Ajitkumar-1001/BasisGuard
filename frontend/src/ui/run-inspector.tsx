@@ -10,7 +10,7 @@ import { ClaimsTable, type OpenClaim } from "./claims-table";
 import { DASH, formatAt, formatCount, formatLatency, formatUsd } from "./format";
 import { HashChip } from "./hash-chip";
 import { RunHeader } from "./run-header";
-import { FIELD_STATE_META, REPAIR_META, REVIEW_META, VERDICT_META } from "./status";
+import { REPAIR_META, REVIEW_META, VERDICT_META } from "./status";
 import { StatusBadge } from "./status-badge";
 import { EmptyState, ErrorState } from "./states";
 import { TableScroll, Td, Th, Tr } from "./table";
@@ -54,12 +54,10 @@ function PanelHeading({ title, children }: { title: string; children?: React.Rea
   );
 }
 
-function TaskOriginalPanel({ policy, taskOutput }: Pick<RunView, "policy" | "taskOutput">) {
+function TaskOriginalPanel({ taskOutput }: Pick<RunView, "taskOutput">) {
   return (
     <div>
-      <PanelHeading title="Task Original">
-        <StatusBadge meta={FIELD_STATE_META.unverified} code={policy === "baseline" ? "unverified" : undefined} />
-      </PanelHeading>
+      <PanelHeading title="Task Original" />
       <p className="mb-3 text-sm text-ink-muted">The research task output exactly as returned, before any checks.</p>
       {taskOutput === null || taskOutput === undefined ? (
         <EmptyState title="No Task output yet" body="The research task has not returned output for this run." />
@@ -128,6 +126,7 @@ function JudgePanel({ claims }: { claims: Claim[] }) {
       <PanelHeading title="Initial Judge" />
       <TableScroll>
         <table className="w-full min-w-[640px] border-collapse">
+          <caption className="sr-only">Initial judge verdicts per claim</caption>
           <thead>
             <tr>
               <Th>Pointer</Th>
@@ -170,6 +169,7 @@ function RepairPanel({ claims }: { claims: Claim[] }) {
       <p className="mb-3 text-sm text-ink-muted">{REPAIR_ONCE_NOTE}</p>
       <TableScroll>
         <table className="w-full min-w-[720px] border-collapse">
+          <caption className="sr-only">Automatic repair attempts per claim</caption>
           <thead>
             <tr>
               <Th>Pointer</Th>
@@ -212,13 +212,21 @@ function ReviewPanel({ claims, localReviews }: { claims: Claim[]; localReviews: 
       <PanelHeading title="Manual Review" />
       <p className="mb-3 text-sm text-ink-muted">Append-only: reviews never change automated verdicts.</p>
       {rows.length === 0 ? (
-        <EmptyState
-          title="No reviews yet"
-          body="Open a claim in Claims & Evidence to add a review. Reviews are appended and never edit a verdict."
-        />
+        claims.length === 0 ? (
+          <EmptyState
+            title="Manual review arrives with claim verification in Phase 2"
+            body="Reviews attach to individual claims, and this run has no claim rows yet."
+          />
+        ) : (
+          <EmptyState
+            title="No reviews yet"
+            body="Open a claim in Claims & Evidence to add a review. Reviews are appended and never edit a verdict."
+          />
+        )
       ) : (
         <TableScroll>
           <table className="w-full min-w-[720px] border-collapse">
+            <caption className="sr-only">Manual review history</caption>
             <thead>
               <tr>
                 <Th>Pointer</Th>
@@ -262,6 +270,7 @@ function DebugPanel({ events }: { events: RunEvent[] }) {
       ) : (
         <TableScroll>
           <table className="w-full min-w-[640px] border-collapse">
+            <caption className="sr-only">Run events</caption>
             <thead>
               <tr>
                 <Th>At</Th>
@@ -316,7 +325,7 @@ export function RunInspector({ view }: { view: RunView }) {
     {
       id: "task-original",
       label: "Task Original",
-      content: <TaskOriginalPanel policy={view.policy} taskOutput={view.taskOutput} />,
+      content: <TaskOriginalPanel taskOutput={view.taskOutput} />,
     },
     { id: "basis", label: "Native Research Basis", content: <BasisPanel basis={view.nativeBasis} /> },
     {

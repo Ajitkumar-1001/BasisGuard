@@ -58,7 +58,7 @@ export function ClaimsTable({
               <Tr
                 key={claim.id}
                 tabIndex={0}
-                className="cursor-pointer"
+                className="cursor-pointer focus-visible:bg-petrol-tint focus-visible:outline-offset-[-2px]"
                 onClick={(e) => onOpen(claim, e.currentTarget)}
                 onKeyDown={(e) => onKeyDown(e, claim)}
               >
