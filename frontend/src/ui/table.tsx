@@ -1,5 +1,15 @@
-export function TableScroll({ children }: { children: React.ReactNode }) {
-  return <div className="overflow-x-auto rounded-md border border-line bg-panel">{children}</div>;
+export function TableScroll({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`overflow-x-auto rounded-md border border-line bg-panel${className ? ` ${className}` : ""}`}>
+      {children}
+    </div>
+  );
+}
+
+export function Tr({ className, ...rest }: React.HTMLAttributes<HTMLTableRowElement>) {
+  return (
+    <tr className={`transition-colors duration-150 hover:bg-petrol-tint${className ? ` ${className}` : ""}`} {...rest} />
+  );
 }
 
 export function Th({
@@ -9,7 +19,8 @@ export function Th({
 }: React.ThHTMLAttributes<HTMLTableCellElement> & { numeric?: boolean }) {
   return (
     <th
-      className={`bg-sunken px-3 py-2 text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted ${numeric ? "text-right" : "text-left"}${className ? ` ${className}` : ""}`}
+      scope="col"
+      className={`sticky top-0 z-10 bg-sunken px-3 py-2 text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted ${numeric ? "text-right" : "text-left"}${className ? ` ${className}` : ""}`}
       {...rest}
     />
   );

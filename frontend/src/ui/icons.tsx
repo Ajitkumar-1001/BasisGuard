@@ -49,7 +49,7 @@ export function Icon({ name, className }: { name: IconKey; className?: string })
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      className={className ?? "shrink-0"}
+      className={className ? `shrink-0 ${className}` : "shrink-0"}
     >
       {PATHS[name]}
     </svg>

@@ -1,11 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { resolveTabId } from "./tabs-util";
 
 export type TabDef = { id: string; label: string; content: React.ReactNode };
 
 export function Tabs({ tabs, defaultId, label }: { tabs: TabDef[]; defaultId: string; label: string }) {
-  const [active, setActive] = useState(defaultId);
+  const [active, setActive] = useState(() => resolveTabId(tabs, defaultId));
+  const uid = useId();
   const refs = useRef(new Map<string, HTMLButtonElement>());
 
   function onKeyDown(e: React.KeyboardEvent, index: number) {
@@ -36,9 +38,9 @@ export function Tabs({ tabs, defaultId, label }: { tabs: TabDef[]; defaultId: st
               }}
               type="button"
               role="tab"
-              id={`tab-${t.id}`}
+              id={`${uid}-tab-${t.id}`}
               aria-selected={selected}
-              aria-controls={`panel-${t.id}`}
+              aria-controls={`${uid}-panel-${t.id}`}
               tabIndex={selected ? 0 : -1}
               onClick={() => setActive(t.id)}
               onKeyDown={(e) => onKeyDown(e, i)}
@@ -55,9 +57,10 @@ export function Tabs({ tabs, defaultId, label }: { tabs: TabDef[]; defaultId: st
         <div
           key={t.id}
           role="tabpanel"
-          id={`panel-${t.id}`}
-          aria-labelledby={`tab-${t.id}`}
+          id={`${uid}-panel-${t.id}`}
+          aria-labelledby={`${uid}-tab-${t.id}`}
           hidden={t.id !== active}
+          tabIndex={0}
           className="pt-4"
         >
           {t.content}

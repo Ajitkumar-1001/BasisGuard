@@ -2,22 +2,30 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
+import { truncateHash } from "./hash-util";
 
 export function HashChip({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  const shown = value.length > 12 ? `${value.slice(0, 12)}…` : value;
+  const shown = truncateHash(value);
+
+  function flash(result: "copied" | "failed") {
+    setCopied(result);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(null), 1500);
+  }
 
   function copy() {
-    void navigator.clipboard.writeText(value).then(
-      () => {
-        setCopied(true);
-        clearTimeout(timer.current);
-        timer.current = setTimeout(() => setCopied(false), 1500);
-      },
-      () => undefined,
+    const clip = navigator.clipboard as Clipboard | undefined;
+    if (!clip?.writeText) {
+      flash("failed");
+      return;
+    }
+    clip.writeText(value).then(
+      () => flash("copied"),
+      () => flash("failed"),
     );
   }
 
@@ -35,7 +43,7 @@ export function HashChip({ value, label }: { value: string; label: string }) {
         <Icon name="copy" />
       </button>
       <span aria-live="polite" className="text-xs text-moss">
-        {copied ? "Copied" : ""}
+        {copied === "copied" ? "Copied" : copied === "failed" ? "Copy failed" : ""}
       </span>
     </span>
   );
