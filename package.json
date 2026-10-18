@@ -1,0 +1,28 @@
+{
+  "name": "basisguard",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.15.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "typecheck": "pnpm -r --if-present typecheck && tsc -p tsconfig.scripts.json --noEmit",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:migrate": "pnpm --filter @basisguard/db migrate",
+    "dev": "pnpm --filter @basisguard/web dev",
+    "worker": "pnpm --filter @basisguard/worker start",
+    "gate-a:probe": "tsx scripts/gate-a-probe.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^22.20.5",
+    "@vitest/coverage-v8": "^5.0.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
