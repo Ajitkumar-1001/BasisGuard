@@ -58,7 +58,7 @@ export function RunView({ runId }: { runId: string }) {
     };
   }, [runId]);
 
-  if (error) return <p role="alert">{error}</p>;
+  if (error) return <p role="alert" className="text-brick">{error}</p>;
   if (!detail) return <p>Loading run…</p>;
   const { run, taskArtifact, spend } = detail;
   return (
@@ -80,17 +80,17 @@ export function RunView({ runId }: { runId: string }) {
         <>
           <section>
             <h2 className="font-semibold">
-              Task original <span className="ml-2 rounded border px-1 text-xs">unverified</span>
+              Task original <span className="ml-2 rounded-sm border border-line bg-sunken px-1 text-xs text-ink-muted">unverified</span>
             </h2>
             <p className="text-xs">
               artifact {taskArtifact.contentHash.slice(0, 16)}…
               {taskArtifact.fixtureOrigin && <> · synthetic fixture ({taskArtifact.fixtureOrigin})</>}
             </p>
-            <pre data-testid="task-content" className="overflow-x-auto rounded border p-3 text-xs">{JSON.stringify(taskArtifact.content, null, 2)}</pre>
+            <pre data-testid="task-content" className="overflow-x-auto rounded-md border border-line bg-sunken p-3 font-mono text-xs">{JSON.stringify(taskArtifact.content, null, 2)}</pre>
           </section>
           <section>
             <h2 className="font-semibold">Native Research Basis (upstream metadata)</h2>
-            <pre className="overflow-x-auto rounded border p-3 text-xs">{JSON.stringify(taskArtifact.basis, null, 2)}</pre>
+            <pre className="overflow-x-auto rounded-md border border-line bg-sunken p-3 font-mono text-xs">{JSON.stringify(taskArtifact.basis, null, 2)}</pre>
           </section>
         </>
       )}

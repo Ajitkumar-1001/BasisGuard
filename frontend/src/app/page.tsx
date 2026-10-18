@@ -10,8 +10,8 @@ export default function Home() {
         not a Parallel product.
       </p>
       <p className="flex gap-4">
-        <Link className="underline" href="/runs/new">Start a research run</Link>
-        <Link className="underline" href="/runs">Browse runs</Link>
+        <Link className="text-petrol underline hover:text-petrol-hover" href="/runs/new">Start a research run</Link>
+        <Link className="text-petrol underline hover:text-petrol-hover" href="/runs">Browse runs</Link>
       </p>
     </section>
   );

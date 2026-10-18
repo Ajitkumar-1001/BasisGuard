@@ -10,12 +10,12 @@ export function NewRunForm() {
   const requestKey = useRef<string | null>(null);
   // The date defaults to today (UTC) on the client only (a server prerender would bake in a stale date). The input
   // stays uncontrolled and is filled through a ref after mount, so no setState-in-effect and no hydration mismatch.
-  const asOfInput = useRef<HTMLInputElement>(null);
+  const asOfRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const el = asOfInput.current;
-    if (el && !el.value) el.value = new Date().toISOString().slice(0, 10);
+    const input = asOfRef.current;
+    if (input && !input.value) input.value = new Date().toISOString().slice(0, 10);
   }, []);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -51,15 +51,15 @@ export function NewRunForm() {
     <form onSubmit={onSubmit} className="space-y-4" aria-describedby="cost-note">
       <label className="block">
         <span className="text-sm font-medium">Company name</span>
-        <input name="company_name" required minLength={2} maxLength={120} className="mt-1 w-full rounded border px-2 py-1" />
+        <input name="company_name" required minLength={2} maxLength={120} className="mt-1 w-full rounded-md border border-line-strong bg-panel px-2 py-1" />
       </label>
       <label className="block">
         <span className="text-sm font-medium">Official domain (optional)</span>
-        <input name="official_domain" placeholder="example.com" className="mt-1 w-full rounded border px-2 py-1" />
+        <input name="official_domain" placeholder="example.com" className="mt-1 w-full rounded-md border border-line-strong bg-panel px-2 py-1" />
       </label>
       <label className="block">
         <span className="text-sm font-medium">As-of date (UTC)</span>
-        <input name="as_of_date" type="date" required ref={asOfInput} className="mt-1 rounded border px-2 py-1" />
+        <input name="as_of_date" type="date" required ref={asOfRef} className="mt-1 rounded-md border border-line-strong bg-panel px-2 py-1" />
       </label>
       <fieldset className="space-y-1">
         <legend className="text-sm font-medium">Policy</legend>
@@ -71,10 +71,10 @@ export function NewRunForm() {
         Profile <code>startup_facts_v1</code>, processor <code>base</code>. In live mode this calls Parallel and may cost money:
         upper bound USD 0.010 per Task, run ceiling USD 5.00.
       </p>
-      <button type="submit" disabled={pending} className="rounded bg-black px-3 py-1.5 text-white disabled:opacity-50 dark:bg-white dark:text-black">
+      <button type="submit" disabled={pending} className="rounded-md bg-petrol px-3 py-1.5 font-medium text-panel hover:bg-petrol-hover disabled:opacity-50">
         {pending ? "Submitting…" : "Start run"}
       </button>
-      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      {error && <p role="alert" className="text-sm text-brick">{error}</p>}
     </form>
   );
 }

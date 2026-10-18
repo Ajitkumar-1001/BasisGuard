@@ -17,11 +17,11 @@ export function RunsList() {
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "request failed"));
   }, []);
-  if (error) return <p role="alert">Could not load runs ({error}).</p>;
+  if (error) return <p role="alert" className="text-brick">Could not load runs ({error}).</p>;
   if (!rows) return <p>Loading…</p>;
-  if (rows.length === 0) return <p>No runs yet. <Link className="underline" href="/runs/new">Start one</Link>.</p>;
+  if (rows.length === 0) return <p>No runs yet. <Link className="text-petrol underline hover:text-petrol-hover" href="/runs/new">Start one</Link>.</p>;
   return (
-    <table className="text-sm">
+    <table className="border border-line bg-panel text-sm">
       <thead>
         <tr>
           <th className="pr-4 text-left">Company</th>
@@ -32,7 +32,7 @@ export function RunsList() {
       <tbody>
         {rows.map((r) => (
           <tr key={r.id}>
-            <td className="pr-4"><Link className="underline" href={`/runs/${r.id}`}>{r.companyName ?? r.id}</Link></td>
+            <td className="pr-4"><Link className="text-petrol underline hover:text-petrol-hover" href={`/runs/${r.id}`}>{r.companyName ?? r.id}</Link></td>
             <td className="pr-4">{r.status}{r.errorCode ? ` (${r.errorCode})` : ""}</td>
             <td>{r.createdAt}</td>
           </tr>
