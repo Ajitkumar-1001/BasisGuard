@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createDb, type DbHandle } from "../../packages/db/src/client";
-import { resetTestDatabase } from "../../packages/db/src/reset-test";
+import { createDb, type DbHandle } from "../../packages/db/client";
+import { resetTestDatabase } from "../../packages/db/reset-test";
 import { E2E_ENV, e2eEnv } from "../../playwright.config";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));

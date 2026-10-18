@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import type { DbHandle } from "../../packages/db/src/client";
+import type { DbHandle } from "../../packages/db/client";
 import { openResetDb } from "./helpers";
 
 // No worker: these tests only exercise the HTTP write path; created runs stay queued.

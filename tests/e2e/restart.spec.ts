@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import type { DbHandle } from "../../packages/db/src/client";
-import { expireLeasesForTest } from "../../packages/db/src/queue";
-import { getRun } from "../../packages/db/src/runs";
-import { jobQueue, usageEvents } from "../../packages/db/src/schema";
+import type { DbHandle } from "../../packages/db/client";
+import { expireLeasesForTest } from "../../packages/db/queue";
+import { getRun } from "../../packages/db/runs";
+import { jobQueue, usageEvents } from "../../packages/db/schema";
 import { killAllWorkers, killWorkerHard, openResetDb, startWorker, stopWorker } from "./helpers";
 
 /**

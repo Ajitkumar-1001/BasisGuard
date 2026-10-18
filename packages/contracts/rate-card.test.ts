@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { RateCard } from "./rate-card";
 
-const path = new URL("../../../config/rate-cards/parallel-2026-10-17.json", import.meta.url);
+const path = new URL("../../config/rate-cards/parallel-2026-10-17.json", import.meta.url);
 const raw = () => JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
 
 describe("RateCard schema", () => {

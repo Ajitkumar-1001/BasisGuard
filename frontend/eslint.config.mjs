@@ -9,12 +9,12 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-imports": ["error", {
         paths: [
-          { name: "parallel-web", message: "Only the worker (packages/providers/src/live) may call Parallel." },
+          { name: "parallel-web", message: "Only the worker (packages/providers/live) may call Parallel." },
           { name: "@basisguard/providers", message: "The web app never calls upstream providers." },
           { name: "openai", message: "The web app never calls upstream providers." },
         ],
         patterns: [
-          { group: ["parallel-web/*"], message: "Only the worker (packages/providers/src/live) may call Parallel." },
+          { group: ["parallel-web/*"], message: "Only the worker (packages/providers/live) may call Parallel." },
           { group: ["@basisguard/providers/*"], message: "The web app never calls upstream providers." },
           { group: ["openai/*"], message: "The web app never calls upstream providers." },
         ],

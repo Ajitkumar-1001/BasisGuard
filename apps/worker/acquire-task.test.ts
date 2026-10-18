@@ -11,7 +11,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { backoffMs, MAX_ACQUIRE_ATTEMPTS, MAX_CONSECUTIVE_READ_FAILURES, processAcquireTask, retryDelayMs, type StepOutcome, type WorkerDeps } from "./acquire-task";
 import { drain, runOnce } from "./worker";
 
-const { card, sha256 } = loadRateCard(fileURLToPath(new URL("../../../config/rate-cards/parallel-2026-10-17.json", import.meta.url)));
+const { card, sha256 } = loadRateCard(fileURLToPath(new URL("../../config/rate-cards/parallel-2026-10-17.json", import.meta.url)));
 let h: DbHandle;
 beforeEach(async () => { if (h) await h.close(); h = await openTestDb(); });
 afterAll(async () => { await h?.close(); });

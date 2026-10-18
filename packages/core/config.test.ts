@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { loadRuntimeConfig } from "./config";
 import { ConfigError } from "./rate-card";
 
-const RATE = fileURLToPath(new URL("../../../config/rate-cards/parallel-2026-10-17.json", import.meta.url));
+const RATE = fileURLToPath(new URL("../../config/rate-cards/parallel-2026-10-17.json", import.meta.url));
 const DB = "postgres://u:p@127.0.0.1:5432/basisguard_test";
 
 describe("loadRuntimeConfig", () => {

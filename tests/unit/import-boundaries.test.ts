@@ -19,13 +19,13 @@ const importsOf = (p: string, mod: string) =>
 
 describe("import boundaries", () => {
   it("parallel-web is imported only by the live adapter and the Gate A probe (and test mocks)", () => {
-    const allowed = (p: string) => p.startsWith("packages/providers/src/live/") || p === "scripts/gate-a-probe.ts" || p.endsWith(".test.ts");
+    const allowed = (p: string) => p.startsWith("packages/providers/live/") || p === "scripts/gate-a-probe.ts" || p.endsWith(".test.ts");
     expect(files.filter((p) => importsOf(p, "parallel-web") && !allowed(p))).toEqual([]);
   });
 
   it("only the live client factory constructs the Parallel SDK client (base URL pinned, maxRetries 0)", () => {
     const constructs = (p: string) => /new\s+Parallel\s*\(/.test(readFileSync(join(ROOT, p), "utf8"));
-    expect(files.filter((p) => constructs(p) && !p.endsWith(".test.ts"))).toEqual(["packages/providers/src/live/client.ts"]);
+    expect(files.filter((p) => constructs(p) && !p.endsWith(".test.ts"))).toEqual(["packages/providers/live/client.ts"]);
   });
 
   it("the web app never imports providers or parallel-web (only the worker calls upstream)", () => {

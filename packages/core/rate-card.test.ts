@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ConfigError, loadRateCard } from "./rate-card";
 
-const pinned = fileURLToPath(new URL("../../../config/rate-cards/parallel-2026-10-17.json", import.meta.url));
+const pinned = fileURLToPath(new URL("../../config/rate-cards/parallel-2026-10-17.json", import.meta.url));
 
 describe("loadRateCard", () => {
   it("loads, validates and fingerprints the file bytes", () => {

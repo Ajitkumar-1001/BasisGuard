@@ -7,8 +7,8 @@ export default defineConfig({
   test: {
     include: [
       "tests/unit/**/*.test.ts",
-      "packages/*/src/**/*.test.ts",
-      "apps/worker/src/**/*.test.ts",
+      "packages/*/**/*.test.ts",
+      "apps/worker/**/*.test.ts",
       "frontend/src/server/**/*.test.ts",
       "scripts/**/*.test.ts",
     ],
@@ -22,7 +22,7 @@ export default defineConfig({
     },
     coverage: {
       provider: "v8",
-      include: ["packages/core/src/**", "packages/contracts/src/**"],
+      include: ["packages/core/**", "packages/contracts/**"],
       exclude: ["**/*.test.ts", "**/index.ts"],
       thresholds: { lines: 80, branches: 80, functions: 80, statements: 80 },
     },

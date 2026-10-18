@@ -7,7 +7,7 @@ vi.mock("parallel-web", () => { throw new Error("parallel-web must not be loaded
 
 const { createProvider } = await import("./create-provider");
 const { FixtureResearchProvider } = await import("./fixture-provider");
-const RATE = fileURLToPath(new URL("../../../config/rate-cards/parallel-2026-10-17.json", import.meta.url));
+const RATE = fileURLToPath(new URL("../../config/rate-cards/parallel-2026-10-17.json", import.meta.url));
 const DB = "postgres://u:p@127.0.0.1:5432/basisguard_test";
 
 describe("createProvider", () => {

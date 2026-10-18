@@ -3,14 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./runtime": "./src/runtime.ts"
+    ".": "./index.ts",
+    "./runtime": "./runtime.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "generate": "drizzle-kit generate",
-    "migrate": "tsx src/bin/migrate.ts",
-    "reset-test": "tsx src/bin/reset-test.ts"
+    "migrate": "tsx bin/migrate.ts",
+    "reset-test": "tsx bin/reset-test.ts"
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.11",

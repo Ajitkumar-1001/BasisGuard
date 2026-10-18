@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import type { DbHandle } from "../../packages/db/src/client";
+import type { DbHandle } from "../../packages/db/client";
 import { killAllWorkers, openResetDb, startWorker, stopWorker, type WorkerProc } from "./helpers";
 
-// Must equal FIXTURE_ORIGIN in packages/providers/src/fixture-provider.ts (literal: that module imports JSON).
+// Must equal FIXTURE_ORIGIN in packages/providers/fixture-provider.ts (literal: that module imports JSON).
 const FIXTURE_ORIGIN = "hand-authored:parallel-web@1.3.5-types";
 
 let worker: WorkerProc | undefined;

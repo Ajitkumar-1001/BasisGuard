@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx src/main.ts",
+    "start": "tsx main.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
