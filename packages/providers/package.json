@@ -9,6 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "parallel-web": "1.3.5"
+    "@basisguard/contracts": "workspace:*",
+    "@basisguard/core": "workspace:*",
+    "parallel-web": "1.3.5",
+    "zod": "^4.6.7"
   }
 }

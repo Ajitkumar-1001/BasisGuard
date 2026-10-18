@@ -8,6 +8,15 @@ importers:
 
   .:
     dependencies:
+      '@basisguard/contracts':
+        specifier: workspace:*
+        version: link:packages/contracts
+      '@basisguard/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@basisguard/providers':
+        specifier: workspace:*
+        version: link:packages/providers
       parallel-web:
         specifier: 1.3.5
         version: 1.3.5
@@ -88,9 +97,18 @@ importers:
 
   packages/providers:
     dependencies:
+      '@basisguard/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@basisguard/core':
+        specifier: workspace:*
+        version: link:../core
       parallel-web:
         specifier: 1.3.5
         version: 1.3.5
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
 packages:
 
