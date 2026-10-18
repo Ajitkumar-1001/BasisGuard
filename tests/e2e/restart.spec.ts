@@ -9,17 +9,17 @@ import { killAllWorkers, killWorkerHard, openResetDb, startWorker, stopWorker } 
  * Phase 1 hard gate: keyless write-path restart/idempotency.
  *
  * Worker ownership: global setup starts no worker and this file spawns its own, so nothing races the kill.
- * Kill window: a fixture run passes `submitting` in milliseconds and waits >= 200 ms (fixture poll delay) in
- * `researching`. We tight-poll the DB and SIGKILL the worker's process group as soon as the run leaves
- * `researching` (provider Task created, provider_run_id persisted) — the window where a restart must resume
- * polling and never create a second Task. If the run was already terminal at kill time the attempt proved
- * nothing about restart, so we retry with a fresh request_key (bounded). Invariants are asserted on every
- * attempt. (The `submitting`-without-provider_run_id crash rule is covered by the worker's DB tests; if an
- * attempt ever lands there it must end `failed/submission_unknown`.)
+ * Kill window (deterministic): the run uses the "Fixture Slow Task" scenario, whose upstream status stays
+ * `pending` for FIXTURE_SLOW_PENDING_MS after the create. The run therefore sits in `researching` with
+ * provider_run_id persisted, and the worker sleeps its fixture poll delay (200 ms) between status reads.
+ * We wait until the run reaches `researching` and at least one healthy pending poll is ledgered, then
+ * SIGKILL the worker's process group. A restarted worker must resume polling (no second Task create)
+ * and finish the run. (The `submitting`-without-provider_run_id crash rule is covered by the worker's
+ * DB tests.)
  */
 const TERMINAL = new Set(["complete", "needs_review", "failed"]);
-const MAX_ATTEMPTS = 8;
 const AS_OF = "2026-10-17";
+const SLOW_COMPANY = "Fixture Slow Task";
 const body = (key: string, company: string) => ({
   request_key: key, company_name: company, profile: "startup_facts_v1", policy: "baseline", as_of_date: AS_OF,
 });
@@ -31,7 +31,7 @@ test.beforeAll(async () => {
 // Safety net: a test timeout abandons the body (its finally/stopWorker never runs), so kill any w1/w2 left.
 test.afterAll(async () => {
   killAllWorkers();
-  await handle.close();
+  await handle?.close();
 });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -46,93 +46,69 @@ async function waitFor<T>(fn: () => Promise<T | undefined>, ms: number, interval
   }
 }
 
-async function taskCreates(runId: string): Promise<number> {
+async function usageCount(runId: string, operation: string): Promise<number> {
   const rows = await handle.db.select().from(usageEvents);
-  return rows.filter((r) => r.runId === runId && r.operation === "task_create").length;
+  return rows.filter((r) => r.runId === runId && r.operation === operation).length;
 }
+const taskCreates = (runId: string) => usageCount(runId, "task_create");
 
 test("SIGKILLed worker mid-run: restart finishes the run with exactly one provider create", async ({ request }) => {
-  test.setTimeout(300_000);
-  let midRunKills = 0;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS && midRunKills === 0; attempt++) {
-    const key = crypto.randomUUID();
-    const company = `Restart Corp ${attempt}`;
-    const created = await request.post("/api/runs", { data: body(key, company) });
-    expect(created.status()).toBe(202);
-    const { runId } = (await created.json()) as { runId: string };
+  test.setTimeout(180_000);
+  const key = crypto.randomUUID();
+  const created = await request.post("/api/runs", { data: body(key, SLOW_COMPANY) });
+  expect(created.status()).toBe(202);
+  const { runId } = (await created.json()) as { runId: string };
 
-    const w1 = await startWorker();
-    let w1Dead = false;
-    let caught: string;
-    try {
-      caught = await waitFor(
-        async () => {
-          const r = await getRun(handle.db, runId);
-          return r && r.status !== "queued" && r.status !== "submitting" ? r.status : undefined;
-        },
-        30_000, 2, `run ${runId} to reach researching`,
-      );
-      await killWorkerHard(w1);
-      w1Dead = true;
-    } finally {
-      if (!w1Dead) await stopWorker(w1);
-    }
-    const atKill = (await getRun(handle.db, runId))!;
-    const [job] = (await handle.db.select().from(jobQueue)).filter((j) => j.runId === runId);
-    const jobStatusAtKill = job?.status ?? "none";
-    // A hard kill leaves a `leased` job for the 90 s lease; expiring it stands in for the timeout (TEST ONLY helper).
-    if (job?.status === "leased") await expireLeasesForTest(handle.db);
-    const createsAtKill = await taskCreates(runId);
-    expect(createsAtKill).toBeLessThanOrEqual(1);
-
-    const midRun = atKill.status === "researching";
-    if (midRun) midRunKills++;
-
-    const w2 = await startWorker();
-    let final;
-    try {
-      final = await waitFor(
-        async () => {
-          const r = await getRun(handle.db, runId);
-          return r && TERMINAL.has(r.status) ? r : undefined;
-        },
-        60_000, 50, `run ${runId} to reach a terminal status after restart`,
-      );
-    } finally {
-      await stopWorker(w2);
-    }
-
-    const creates = await taskCreates(runId);
-    console.log(
-      `[restart attempt ${attempt}] observed=${caught} atKill=${atKill.status} job=${jobStatusAtKill} ` +
-        `providerRunIdAtKill=${atKill.providerRunId ? "set" : "null"} createsAtKill=${createsAtKill} ` +
-        `final=${final.status}/${final.errorCode ?? "-"} creates=${creates} midRun=${midRun}`,
+  const w1 = await startWorker();
+  let w1Dead = false;
+  try {
+    await waitFor(
+      async () => {
+        const r = await getRun(handle.db, runId);
+        if (r && TERMINAL.has(r.status)) throw new Error(`run ${runId} reached ${r.status} before the kill; the pending window did not hold`);
+        return r?.status === "researching" && (await usageCount(runId, "task_status")) >= 1 ? true : undefined;
+      },
+      30_000, 2, `run ${runId} to reach researching with a pending poll`,
     );
-
-    // Invariants for whatever kill point was reached.
-    expect(creates).toBeLessThanOrEqual(1);
-    if (midRun) expect(final.status).toBe("complete");
-    if (final.status === "complete") {
-      expect(creates).toBe(1);
-      expect(final.providerRunId).toBe(`fx_ok_${key}`);
-    } else {
-      // The only acceptable non-complete outcome: killed in `submitting` before provider_run_id was persisted.
-      expect(final.status).toBe("failed");
-      expect(final.errorCode).toBe("submission_unknown");
-      expect(atKill.status).toBe("submitting");
-      expect(atKill.providerRunId).toBeNull();
-    }
-    // provider_run_id is write-once: whatever was persisted before the kill is unchanged after restart.
-    if (atKill.providerRunId) expect(final.providerRunId).toBe(atKill.providerRunId);
-
-    // Idempotent resubmit after restart: same key + same body ⇒ 200 same run; different body ⇒ 409.
-    const again = await request.post("/api/runs", { data: body(key, company) });
-    expect(again.status()).toBe(200);
-    expect((await again.json()).runId).toBe(runId);
-    const conflict = await request.post("/api/runs", { data: body(key, `${company} changed`) });
-    expect(conflict.status()).toBe(409);
-    expect((await conflict.json()).code).toBe("idempotency_conflict");
-    expect(await taskCreates(runId)).toBe(creates);
+    await killWorkerHard(w1);
+    w1Dead = true;
+  } finally {
+    if (!w1Dead) await stopWorker(w1);
   }
-  expect(midRunKills, "no attempt landed the SIGKILL while the run was researching").toBeGreaterThan(0);
+  const atKill = (await getRun(handle.db, runId))!;
+  expect(atKill.status).toBe("researching");
+  expect(atKill.providerRunId).toMatch(new RegExp(`^fx_slow_\\d+_${key}$`));
+  expect(await taskCreates(runId)).toBe(1);
+  const [job] = (await handle.db.select().from(jobQueue)).filter((j) => j.runId === runId);
+  // A hard kill can leave a `leased` job for the 90 s lease; expiring it stands in for the timeout (TEST ONLY helper).
+  if (job?.status === "leased") await expireLeasesForTest(handle.db);
+
+  const w2 = await startWorker();
+  let final;
+  try {
+    final = await waitFor(
+      async () => {
+        const r = await getRun(handle.db, runId);
+        return r && TERMINAL.has(r.status) ? r : undefined;
+      },
+      60_000, 50, `run ${runId} to reach a terminal status after restart`,
+    );
+  } finally {
+    await stopWorker(w2);
+  }
+  console.log(`[restart] job=${job?.status ?? "none"} final=${final.status}/${final.errorCode ?? "-"} creates=${await taskCreates(runId)}`);
+
+  expect(final.status).toBe("complete");
+  expect(await taskCreates(runId)).toBe(1);
+  // provider_run_id is write-once: what was persisted before the kill is unchanged after restart.
+  expect(final.providerRunId).toBe(atKill.providerRunId);
+
+  // Idempotent resubmit after restart: same key + same body ⇒ 200 same run; different body ⇒ 409.
+  const again = await request.post("/api/runs", { data: body(key, SLOW_COMPANY) });
+  expect(again.status()).toBe(200);
+  expect((await again.json()).runId).toBe(runId);
+  const conflict = await request.post("/api/runs", { data: body(key, `${SLOW_COMPANY} changed`) });
+  expect(conflict.status()).toBe(409);
+  expect((await conflict.json()).code).toBe("idempotency_conflict");
+  expect(await taskCreates(runId)).toBe(1);
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProviderError } from "./errors";
-import { FixtureResearchProvider } from "./fixture-provider";
+import { FIXTURE_SLOW_PENDING_MS, FixtureResearchProvider } from "./fixture-provider";
 
 const input = (companyName: string) => ({ companyName, profileVersion: "startup_facts_v1" as const, asOfDate: "2026-10-17", processor: "base" as const, requestKey: "6f2c1c9e-1d7e-4c47-9a3a-1b1b6f0a9f11" });
 
@@ -31,5 +31,20 @@ describe("FixtureResearchProvider (stateless, zero network)", () => {
 
   it("rejects provider run ids it did not mint", async () => {
     await expect(new FixtureResearchProvider().getTaskStatus("trun_real")).rejects.toBeInstanceOf(ProviderError);
+  });
+
+  it("'Fixture Slow Task' stays pending for a fixed window after create, then completes; stateless across instances", async () => {
+    let t = 1_760_000_000_000;
+    const clock = () => t;
+    const { providerRunId } = await new FixtureResearchProvider({ now: clock }).createStructuredTask(input("Fixture Slow Task"));
+    expect(providerRunId).toBe(`fx_slow_${t}_${input("x").requestKey}`);
+    const other = new FixtureResearchProvider({ now: clock }); // a restarted worker reads the window from the id
+    expect(await other.getTaskStatus(providerRunId)).toEqual({ state: "pending", rawStatus: "running" });
+    t += FIXTURE_SLOW_PENDING_MS - 1;
+    expect((await other.getTaskStatus(providerRunId)).state).toBe("pending");
+    t += 1;
+    expect(await other.getTaskStatus(providerRunId)).toEqual({ state: "completed", rawStatus: "completed" });
+    const { raw } = await other.getTaskResult(providerRunId);
+    expect(raw).toMatchObject({ run: { run_id: providerRunId }, output: { type: "json" } });
   });
 });
