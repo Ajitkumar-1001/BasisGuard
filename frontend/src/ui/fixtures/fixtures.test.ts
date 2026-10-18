@@ -24,6 +24,15 @@ function collectUrls(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
+function sum(c: Record<string, number>): number {
+  return Object.values(c).reduce((a, b) => a + b, 0);
+}
+
+function micros(usd: string): number {
+  const [whole, frac] = usd.split(".");
+  return Number(whole) * 1_000_000 + Number(frac);
+}
+
 async function runs(): Promise<RunView[]> {
   return listFixtureRuns();
 }
@@ -67,7 +76,7 @@ describe("fixture runs", () => {
       for (const u of urls) {
         const parsed = new URL(u);
         expect(parsed.protocol, u).toBe("https:");
-        expect(parsed.hostname.endsWith("example.com"), u).toBe(true);
+        expect(parsed.hostname === "example.com" || parsed.hostname.endsWith(".example.com"), u).toBe(true);
       }
     }
   });
@@ -110,6 +119,61 @@ describe("fixture runs", () => {
       for (const c of r.claims) {
         if (c.finalVerdict === null) continue;
         expect(c.action, `${r.company} ${c.pointer}`).toBe(map[c.finalVerdict]);
+      }
+    }
+  });
+
+  it("keeps repair attempts coherent with verdicts and policy", async () => {
+    const reviewOnly: (Claim["initialVerdict"])[] = ["contradicted", "verification_failed", "decomposition_failed"];
+    let seen = 0;
+    for (const r of await runs()) {
+      for (const c of r.claims) {
+        if (!c.repair) continue;
+        seen += 1;
+        const label = `${r.company} ${c.pointer}`;
+        if (c.repair.state === "succeeded") {
+          expect(c.repair.postVerdict, label).toBeDefined();
+          expect(c.repair.bundleHash, label).toMatch(HEX64);
+          expect(c.finalVerdict, label).toBe(c.repair.postVerdict);
+          expect(c.repair.evidenceIds.length, label).toBeGreaterThan(0);
+        } else {
+          expect(c.repair.postVerdict, label).toBeUndefined();
+          expect(c.finalVerdict, label).toBe(c.initialVerdict);
+        }
+        if (c.repair.state === "not_eligible") expect(reviewOnly, label).toContain(c.initialVerdict);
+        if (c.repair.state === "policy_disabled") expect(r.policy, label).toBe("verify");
+        if (reviewOnly.includes(c.initialVerdict)) expect(c.repair.state, label).toBe("not_eligible");
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+  });
+
+  it("places repair timestamps inside the run timeline", async () => {
+    for (const r of await runs()) {
+      const last = r.events[r.events.length - 1]!.at;
+      for (const c of r.claims) {
+        if (!c.repair) continue;
+        expect(c.repair.at >= r.createdAt, `${r.company} ${c.pointer} after createdAt`).toBe(true);
+        expect(c.repair.at <= last, `${r.company} ${c.pointer} before last event`).toBe(true);
+      }
+      const sorted = [...r.events].map((e) => e.at).sort();
+      expect(r.events.map((e) => e.at)).toEqual(sorted);
+      expect(r.events[0]!.at >= r.createdAt).toBe(true);
+    }
+  });
+
+  it("maps each evidence URL to exactly one hash and excerpt", async () => {
+    for (const r of await runs()) {
+      const byUrl = new Map<string, string>();
+      for (const e of r.evidence) {
+        expect(byUrl.has(e.url), `${r.company} duplicate evidence url ${e.url}`).toBe(false);
+        byUrl.set(e.url, e.contentHash);
+      }
+      // A claim with no evidence row (unavailable) must not share its URL with fetched evidence.
+      for (const c of r.claims) {
+        if (c.judgeEvidenceIds.length > 0 || c.repair?.evidenceIds.length) continue;
+        if (r.policy === "baseline") continue;
+        for (const cite of c.citations) expect(byUrl.has(cite.url), cite.url).toBe(false);
       }
     }
   });
@@ -173,16 +237,64 @@ describe("fixture evaluations", () => {
     expect(v4.repairLabelQueue).toBe(3);
   });
 
-  it("gives B and C identical initial hashes per case and separates spend", async () => {
+  it("keeps case rows internally consistent", async () => {
     for (const e of await listEvaluations()) {
-      expect(e.snapshotHash).toMatch(HEX64);
-      expect(e.manifestHash).toMatch(HEX64);
+      expect(e.cases.length).toBe(e.casesNatural + e.casesPerturbed);
+      expect(e.cases.filter((c) => c.kind === "natural")).toHaveLength(e.casesNatural);
+      expect(e.cases.filter((c) => c.kind === "perturbed")).toHaveLength(e.casesPerturbed);
+      const seeded = new Set(["Northwind Robotics", "Halcyon Freight", "Tamarack Bio", "Lumen Ledger", "Orchard Systems"]);
       for (const c of e.cases) {
+        expect(seeded.has(c.company), c.company).toBe(false);
+        expect(sum(c.b), c.id).toBe(c.aUnverified);
+        expect(sum(c.c), c.id).toBe(c.aUnverified);
+        expect(c.c.accept).toBeGreaterThanOrEqual(c.b.accept);
+        expect(c.c.abstain).toBeLessThanOrEqual(c.b.abstain);
+        expect(c.c.review).toBe(c.b.review);
         expect(c.bInitialHash).toMatch(HEX64);
         expect(c.bInitialHash).toBe(c.cInitialHash);
         expect(c.cPostRepair).toMatch(HEX64);
+        expect(c.cPostRepair).not.toBe(c.cInitialHash);
       }
-      expect(e.spendAttributed.map((s) => s.policy).sort()).toEqual(["baseline", "verify", "verify_and_repair"]);
+      expect(new Set(e.cases.map((c) => c.bInitialHash)).size).toBe(e.cases.length);
+      expect(e.snapshotHash).toMatch(HEX64);
+      expect(e.manifestHash).toMatch(HEX64);
+    }
+  });
+
+  it("keeps metric strata consistent with totals and case rows", async () => {
+    for (const e of await listEvaluations()) {
+      const fieldsByKind = (kind: "natural" | "perturbed") =>
+        e.cases.filter((c) => c.kind === kind).reduce((n, c) => n + c.aUnverified, 0);
+      for (const m of [...e.initialMetrics, ...e.repairMetrics]) {
+        expect(m.natural.numerator + m.synthetic.numerator, m.label).toBe(m.numerator);
+        expect(m.natural.denominator + m.synthetic.denominator, m.label).toBe(m.denominator);
+        for (const s of [m, m.natural, m.synthetic]) expect(s.numerator).toBeLessThanOrEqual(s.denominator);
+        expect(m.missingLabels).toBeGreaterThanOrEqual(0);
+      }
+      for (const m of e.initialMetrics) {
+        expect(m.natural.denominator, m.label).toBe(fieldsByKind("natural"));
+        expect(m.synthetic.denominator, m.label).toBe(fieldsByKind("perturbed"));
+      }
+      const accepted = e.initialMetrics.find((m) => m.label.startsWith("Fields accepted"))!;
+      expect(accepted.numerator).toBe(e.cases.reduce((n, c) => n + c.b.accept, 0));
+      const recovered = e.repairMetrics[0]!;
+      expect(recovered.denominator).toBe(e.cases.reduce((n, c) => n + c.b.abstain, 0));
+      // Label readiness: complete datasets have no missing labels.
+      const pending = e.supportLabelsTotal - e.supportLabelsDone;
+      for (const m of e.initialMetrics) expect(m.missingLabels).toBe(pending);
+      for (const m of e.repairMetrics) expect(m.missingLabels).toBe(e.repairLabelQueue);
+      expect(e.supportLabelsTotal).toBe(e.cases.reduce((n, c) => n + c.aUnverified, 0));
+    }
+  });
+
+  it("separates actual from attributed spend per PRD 3.2", async () => {
+    for (const e of await listEvaluations()) {
+      const by = Object.fromEntries(e.spendAttributed.map((s) => [s.policy, micros(s.usd)]));
+      expect(Object.keys(by).sort()).toEqual(["baseline", "verify", "verify_and_repair"]);
+      expect(by.verify!).toBeGreaterThan(by.baseline!);
+      expect(by.verify_and_repair!).toBeGreaterThanOrEqual(by.verify!);
+      // Task acquired in dataset prep, so actual = judge + repair = attributed C - attributed A.
+      expect(micros(e.spendActualUsd)).toBe(by.verify_and_repair! - by.baseline!);
     }
   });
 });

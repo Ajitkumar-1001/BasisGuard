@@ -1,48 +1,90 @@
-import type { EvalCase, EvalMetric, EvaluationView } from "@/ui/view-models";
+import type { EvalCase, EvalMetric, EvalStratum, EvaluationView } from "@/ui/view-models";
 import { hex64 } from "./helpers";
 
-function metric(
-  label: string,
-  numerator: number,
-  denominator: number,
-  nat: [number, number],
-  syn: [number, number],
-  missingLabels = 0,
-  errors = 0,
-): EvalMetric {
-  return {
-    label,
-    numerator,
-    denominator,
-    missingLabels,
-    errors,
-    natural: { numerator: nat[0], denominator: nat[1] },
-    synthetic: { numerator: syn[0], denominator: syn[1] },
-  };
+type Counts = EvalCase["b"];
+
+function counts(accept: number, abstain: number, review: number): Counts {
+  return { accept, abstain, review };
 }
 
+/**
+ * Dataset case. `fields` is the case's non-null field count; B and C counts
+ * must each sum to it. B and C share one explicit initial-bundle hash because
+ * C imports B's initial verdicts (PRD 3.2).
+ */
 function evalCase(
   id: string,
   company: string,
   kind: EvalCase["kind"],
-  b: EvalCase["b"],
-  c: EvalCase["c"],
+  fields: number,
+  b: Counts,
+  c: Counts,
   perturbation?: string,
 ): EvalCase {
-  const initial = hex64(`v3:${id}:initial`);
+  const initialHash = hex64(`case:${id}:initial-bundle`);
   return {
     id,
     company,
     kind,
     ...(perturbation ? { perturbation } : {}),
-    aUnverified: 8,
+    aUnverified: fields,
     b,
     c,
-    bInitialHash: initial,
-    cInitialHash: initial,
-    cPostRepair: hex64(`v3:${id}:post-repair`),
+    bInitialHash: initialHash,
+    cInitialHash: initialHash,
+    cPostRepair: hex64(`case:${id}:post-repair`),
   };
 }
+
+/** Metric whose totals and strata are derived from the case rows, so they cannot disagree. */
+function metric(
+  label: string,
+  cases: EvalCase[],
+  pick: (c: EvalCase) => [number, number],
+  missingLabels: number,
+): EvalMetric {
+  const sum = (kind: EvalCase["kind"] | null): EvalStratum => {
+    let numerator = 0;
+    let denominator = 0;
+    for (const c of cases) {
+      if (kind !== null && c.kind !== kind) continue;
+      const [n, d] = pick(c);
+      numerator += n;
+      denominator += d;
+    }
+    return { numerator, denominator };
+  };
+  const total = sum(null);
+  return {
+    label,
+    numerator: total.numerator,
+    denominator: total.denominator,
+    missingLabels,
+    errors: 0,
+    natural: sum("natural"),
+    synthetic: sum("perturbed"),
+  };
+}
+
+function initialMetrics(cases: EvalCase[], missingLabels: number): EvalMetric[] {
+  return [
+    metric("Fields accepted (B)", cases, (c) => [c.b.accept, c.aUnverified], missingLabels),
+    metric("Fields sent to review (B)", cases, (c) => [c.b.review, c.aUnverified], missingLabels),
+    metric("Fields abstained (B)", cases, (c) => [c.b.abstain, c.aUnverified], missingLabels),
+  ];
+}
+
+function repairMetrics(cases: EvalCase[], missingLabels: number): EvalMetric[] {
+  return [
+    metric("Abstentions recovered by repair (C)", cases, (c) => [c.c.accept - c.b.accept, c.b.abstain], missingLabels),
+  ];
+}
+
+const v3Cases: EvalCase[] = [
+  evalCase("case-ashgrove", "Ashgrove Dynamics", "natural", 8, counts(5, 2, 1), counts(6, 1, 1)),
+  evalCase("case-bellwether", "Bellwether Optics", "natural", 8, counts(6, 2, 0), counts(6, 2, 0)),
+  evalCase("case-corvane", "Corvane Textiles", "perturbed", 8, counts(4, 2, 2), counts(5, 1, 2), "founder_swap"),
+];
 
 const v3: EvaluationView = {
   id: "2c8e4f10-5d93-4b27-96a1-d07f3b8e5c42",
@@ -57,25 +99,16 @@ const v3: EvaluationView = {
   repairLabelQueue: 0,
   casesNatural: 2,
   casesPerturbed: 1,
-  cases: [
-    evalCase("case-northwind", "Northwind Robotics", "natural", { accept: 4, abstain: 2, review: 2 }, { accept: 5, abstain: 1, review: 2 }),
-    evalCase("case-halcyon", "Halcyon Freight", "natural", { accept: 7, abstain: 1, review: 0 }, { accept: 7, abstain: 1, review: 0 }),
-    evalCase("case-northwind-swap", "Northwind Robotics", "perturbed", { accept: 3, abstain: 2, review: 3 }, { accept: 3, abstain: 2, review: 3 }, "founder_swap"),
-  ],
-  initialMetrics: [
-    metric("Scalar field accuracy", 14, 18, [10, 12], [4, 6]),
-    metric("Unsupported accepted rate", 1, 14, [0, 10], [1, 4]),
-    metric("Answer coverage", 20, 24, [14, 16], [6, 8]),
-  ],
-  repairMetrics: [
-    metric("Repair precision", 1, 2, [1, 2], [0, 0]),
-    metric("Recovery rate", 1, 3, [1, 3], [0, 0]),
-  ],
-  spendActualUsd: "1.240000",
+  cases: v3Cases,
+  initialMetrics: initialMetrics(v3Cases, 0),
+  repairMetrics: repairMetrics(v3Cases, 0),
+  // Task acquired once during dataset prep. Attributed: A = Task, B = A + initial judge,
+  // C = B + repair. Actual experiment spend = judge + repair = C - A.
+  spendActualUsd: "0.700000",
   spendAttributed: [
     { policy: "baseline", usd: "0.540000" },
     { policy: "verify", usd: "0.980000" },
-    { policy: "verify_and_repair", usd: "1.420000" },
+    { policy: "verify_and_repair", usd: "1.240000" },
   ],
   events: [
     { at: "2026-09-20T12:00:00Z", kind: "evaluation.queued", detail: "Experiment queued against dataset v3." },
@@ -84,6 +117,12 @@ const v3: EvaluationView = {
     { at: "2026-09-20T13:10:00Z", kind: "evaluation.complete", detail: "All branches finished; repair labels reviewed." },
   ],
 };
+
+const v4Cases: EvalCase[] = [
+  evalCase("case-dunmore", "Dunmore Marine", "natural", 7, counts(4, 2, 1), counts(5, 1, 1)),
+  evalCase("case-evergreen", "Evergreen Mills", "natural", 7, counts(5, 2, 0), counts(6, 1, 0)),
+  evalCase("case-fenwick", "Fenwick Labs", "natural", 7, counts(5, 1, 1), counts(5, 1, 1)),
+];
 
 const v4: EvaluationView = {
   id: "9a1d6b37-8c20-4e5f-b4d8-6f3a0c7e1925",
@@ -98,25 +137,14 @@ const v4: EvaluationView = {
   repairLabelQueue: 3,
   casesNatural: 3,
   casesPerturbed: 0,
-  cases: [
-    evalCase("case-tamarack", "Tamarack Bio", "natural", { accept: 5, abstain: 2, review: 1 }, { accept: 6, abstain: 1, review: 1 }),
-    evalCase("case-lumen", "Lumen Ledger", "natural", { accept: 6, abstain: 1, review: 1 }, { accept: 6, abstain: 1, review: 1 }),
-    evalCase("case-orchard", "Orchard Systems", "natural", { accept: 4, abstain: 3, review: 1 }, { accept: 5, abstain: 2, review: 1 }),
-  ],
-  initialMetrics: [
-    metric("Scalar field accuracy", 9, 14, [9, 14], [0, 0], 7),
-    metric("Unsupported accepted rate", 1, 10, [1, 10], [0, 0], 7),
-    metric("Answer coverage", 17, 24, [17, 24], [0, 0]),
-  ],
-  repairMetrics: [
-    metric("Repair precision", 0, 0, [0, 0], [0, 0], 3),
-    metric("Recovery rate", 0, 0, [0, 0], [0, 0], 3),
-  ],
-  spendActualUsd: "0.870000",
+  cases: v4Cases,
+  initialMetrics: initialMetrics(v4Cases, 7),
+  repairMetrics: repairMetrics(v4Cases, 3),
+  spendActualUsd: "0.480000",
   spendAttributed: [
     { policy: "baseline", usd: "0.390000" },
     { policy: "verify", usd: "0.700000" },
-    { policy: "verify_and_repair", usd: "1.010000" },
+    { policy: "verify_and_repair", usd: "0.870000" },
   ],
   events: [
     { at: "2026-10-10T09:00:00Z", kind: "evaluation.queued", detail: "Preview experiment queued against draft dataset v4-draft." },

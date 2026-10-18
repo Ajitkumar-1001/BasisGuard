@@ -36,7 +36,10 @@ function renderTemplate(pointer: string, company: string, asOf: string, value: s
   if (pointer === "/latest_funding/amount_usd") {
     return `As of ${asOf}, amount of latest publicly announced financing round for ${company} is USD ${value}`;
   }
-  return `As of ${asOf}, latest publicly announced financing round for ${company} was announced on ${value}`;
+  if (pointer === "/latest_funding/announced_on") {
+    return `As of ${asOf}, latest publicly announced financing round for ${company} was announced on ${value}`;
+  }
+  throw new Error(`No claim template for pointer ${pointer}`);
 }
 
 interface ClaimSpec {
@@ -65,6 +68,8 @@ interface RunSpec {
   asOfDate: string;
   createdAt: string;
   taskSnapshot: boolean;
+  /** Timestamp of the repair step; must fall inside the run timeline. */
+  repairAt: string;
   providerCalls: number;
   extractUrlUnits: number;
   spendEstimatedUsd: string;
@@ -76,10 +81,15 @@ interface RunSpec {
   events: RunEvent[];
 }
 
+function pointerLeaf(pointer: string): string {
+  return pointer.slice(1).replace(/\//g, "-").replace(/_/g, "-");
+}
+
+/** One distinct URL per claim pointer, so each evidence URL maps to exactly one hash. */
 function sourceUrl(slug: string, pointer: string): string {
-  const leaf = pointer.slice(1).replace(/\//g, "-").replace(/_/g, "-");
+  const leaf = pointerLeaf(pointer);
   return pointer.startsWith("/latest_funding")
-    ? `https://news.example.com/${slug}-funding`
+    ? `https://news.example.com/${slug}-${leaf}`
     : `https://${slug}.example.com/${leaf}`;
 }
 
@@ -100,10 +110,10 @@ function buildRun(spec: RunSpec): RunView {
 
     let repair: RepairAttempt | null = null;
     if (c.repair) {
-      const at = "2026-10-02T09:14:00Z";
+      const at = spec.repairAt;
       if (c.repair.state === "succeeded") {
         const repairId = `${spec.slug}-rp-${n}`;
-        const repairUrl = `https://news.example.com/${spec.slug}-${c.pointer.slice(1).replace(/\//g, "-").replace(/_/g, "-")}`;
+        const repairUrl = `https://news.example.com/${spec.slug}-${pointerLeaf(c.pointer)}-followup`;
         evidence.push({
           id: repairId,
           url: repairUrl,
@@ -188,6 +198,7 @@ const northwind = buildRun({
   asOfDate: AS_OF,
   createdAt: "2026-10-02T09:00:00Z",
   taskSnapshot: true,
+  repairAt: "2026-10-02T09:14:00Z",
   providerCalls: 6,
   extractUrlUnits: 3,
   spendEstimatedUsd: "0.640000",
@@ -306,6 +317,7 @@ const halcyon = buildRun({
   asOfDate: AS_OF,
   createdAt: "2026-10-03T14:20:00Z",
   taskSnapshot: true,
+  repairAt: "2026-10-03T14:22:55Z",
   providerCalls: 4,
   extractUrlUnits: 2,
   spendEstimatedUsd: "0.410000",
@@ -393,6 +405,7 @@ const tamarack = buildRun({
   asOfDate: AS_OF,
   createdAt: "2026-10-04T08:05:00Z",
   taskSnapshot: true,
+  repairAt: "2026-10-04T08:06:04Z",
   providerCalls: 1,
   extractUrlUnits: 0,
   spendEstimatedUsd: "0.050000",
@@ -470,6 +483,7 @@ const lumen = buildRun({
   asOfDate: AS_OF,
   createdAt: "2026-10-05T16:45:00Z",
   taskSnapshot: false,
+  repairAt: "2026-10-05T16:45:10Z",
   providerCalls: 1,
   extractUrlUnits: 0,
   spendEstimatedUsd: "0.050000",
@@ -497,6 +511,7 @@ const orchard = buildRun({
   asOfDate: AS_OF,
   createdAt: "2026-10-06T10:30:00Z",
   taskSnapshot: false,
+  repairAt: "2026-10-06T10:31:05Z",
   providerCalls: 1,
   extractUrlUnits: 0,
   spendEstimatedUsd: "0.100000",
