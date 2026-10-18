@@ -34,6 +34,6 @@ export type CostKind = z.infer<typeof CostKind>;
 export const RunErrorCode = z.enum([
   "submission_unknown", "provider_auth_error", "provider_rate_limited", "provider_unavailable",
   "provider_bad_request", "provider_task_failed", "provider_action_required", "normalization_failed",
-  "budget_exhausted", "cost_unknown", "deadline_exceeded",
+  "budget_exhausted", "cost_unknown", "deadline_exceeded", "max_attempts_exceeded",
 ]);
 export type RunErrorCode = z.infer<typeof RunErrorCode>;

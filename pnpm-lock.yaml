@@ -40,6 +40,28 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@22.20.5)(@vitest/coverage-v8@5.0.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
+  apps/worker:
+    dependencies:
+      '@basisguard/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@basisguard/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@basisguard/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@basisguard/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(postgres@3.4.9)
+    devDependencies:
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+
   frontend:
     dependencies:
       '@basisguard/contracts':
