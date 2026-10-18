@@ -52,15 +52,24 @@ function bounded(deps: WorkerDeps, run: RunRow, delayMs: number, reason: string)
 }
 
 /**
- * Fail-transition helper. `transitionRun` returns false when the run is already terminal or another
- * worker moved it (lost CAS). In both cases this worker no longer owns the run's next step, so it
- * finishes the job without any further mutation.
+ * Outcome after a lost run CAS. A terminal (or missing) run needs nothing more, so the job finishes.
+ * A still non-terminal run was moved by someone else — possibly a stale-lease worker whose own job writes
+ * are fenced off (its retryJob throws LeaseLostError), so it cannot requeue the run. Finishing the job
+ * here would strand the run with no job and no deadline check; instead this lease holder re-evaluates
+ * from the run's current status on the next step.
  */
+async function afterLostCas(db: DbOrTx, runId: string): Promise<StepOutcome> {
+  const current = await getRun(db, runId);
+  if (!current || isTerminalRunStatus(current.status)) return DONE;
+  return { kind: "retry", delayMs: 0, reason: `lost_race: run is ${current.status}` };
+}
+
+/** Fail-transition helper. On a lost CAS it defers to `afterLostCas` (never DONE on a non-terminal run). */
 async function failRun(
   db: DbOrTx, run: RunRow, from: RunStatus, errorCode: RunErrorCode, details: Record<string, unknown>,
 ): Promise<StepOutcome> {
-  await transitionRun(db, run.id, from, "failed", { errorCode }, { type: "run_failed", details });
-  return DONE;
+  const moved = await transitionRun(db, run.id, from, "failed", { errorCode }, { type: "run_failed", details });
+  return moved ? DONE : afterLostCas(db, run.id);
 }
 
 export async function processAcquireTask(deps: WorkerDeps, job: LeasedJob): Promise<StepOutcome> {
@@ -108,7 +117,8 @@ async function submit(deps: WorkerDeps, run: RunRow, job: LeasedJob): Promise<St
     reserved = await deps.db.transaction(async (tx) => {
       const r = await reserveRunBudget(tx, { runId: run.id, operationKey: opKey, operation: "task_create", providerCallUnits: 1, extractUrlUnits: 0, reservedUsd: price });
       if (!r.ok) {
-        await transitionRun(tx, run.id, "queued", "failed", { errorCode: "budget_exhausted" }, { type: "run_failed", details: { reason: r.reason } });
+        const failed = await transitionRun(tx, run.id, "queued", "failed", { errorCode: "budget_exhausted" }, { type: "run_failed", details: { reason: r.reason } });
+        if (!failed) throw new Rollback();
         return false;
       }
       const moved = await transitionRun(tx, run.id, "queued", "submitting", { rateCardSha256: deps.rateCardSha256 },
@@ -117,7 +127,8 @@ async function submit(deps: WorkerDeps, run: RunRow, job: LeasedJob): Promise<St
       return true;
     });
   } catch (e) {
-    if (e instanceof Rollback) return DONE; // terminal or moved by another worker: no dispatch, no reservation
+    // Lost CAS (terminal, or moved by another worker): no dispatch, no reservation kept.
+    if (e instanceof Rollback) return afterLostCas(deps.db, run.id);
     throw e;
   }
   if (!reserved) return DONE;
@@ -135,7 +146,7 @@ async function submit(deps: WorkerDeps, run: RunRow, job: LeasedJob): Promise<St
         await recordUsage(tx, { ...ledger, requestId: opKey, costKind: "estimated", usd: "0", latencyMs });
         if (e.code === "provider_rate_limited") {
           const moved = await transitionRun(tx, run.id, "submitting", "queued", {}, { type: "task_create_rate_limited", details: { message: e.message } });
-          return moved ? bounded(deps, run, retryDelayMs(e.retryAfterMs, job.attemptCount), "rate_limited") : DONE;
+          return moved ? bounded(deps, run, retryDelayMs(e.retryAfterMs, job.attemptCount), "rate_limited") : afterLostCas(tx, run.id);
         }
         return failRun(tx, run, "submitting", e.code, { message: e.message });
       });
@@ -144,12 +155,11 @@ async function submit(deps: WorkerDeps, run: RunRow, job: LeasedJob): Promise<St
     // adapter's 404/409 → provider_unavailable/unknown mapping) may have created an upstream Task.
     // Fail closed (D-009): count the reservation as spent, ledger the call as unknown, never re-create.
     const message = e instanceof Error ? `${e.name}: ${e.message}` : "non-error thrown";
-    await deps.db.transaction(async (tx) => {
+    return deps.db.transaction(async (tx): Promise<StepOutcome> => {
       await settleReservation(tx, opKey, "reconciled");
       await recordUsage(tx, { ...ledger, requestId: opKey, costKind: "unknown", usd: price, latencyMs });
-      await failRun(tx, run, "submitting", "submission_unknown", { message });
+      return failRun(tx, run, "submitting", "submission_unknown", { message });
     });
-    return DONE;
   }
   await deps.hooks?.afterProviderCreate?.();
   const latencyMs = Date.now() - started;
@@ -170,22 +180,34 @@ async function submit(deps: WorkerDeps, run: RunRow, job: LeasedJob): Promise<St
         providerRunId: created.providerRunId, createResponse: created.rawResponse, taskRequestArtifactId: request.id,
         observedStatus: current?.status ?? null,
       });
-      return DONE;
+      return afterLostCas(tx, run.id);
     }
     return { kind: "retry", delayMs: 0, reason: "poll" };
   });
 }
 
+/**
+ * `run` is a snapshot read outside any lock: a stale-lease worker may have persisted provider_run_id
+ * (submitting→researching) or gone back to queued (429) since. If the CAS loses, the reservation
+ * settlement rolls back with it and the outcome comes from the run's current status.
+ */
 async function failSubmissionUnknown(deps: WorkerDeps, run: RunRow, why: string): Promise<StepOutcome> {
-  await deps.db.transaction(async (tx) => {
-    const active = await tx
-      .select({ key: budgetReservations.operationKey })
-      .from(budgetReservations)
-      .where(and(eq(budgetReservations.scopeType, "run"), eq(budgetReservations.scopeId, run.id), eq(budgetReservations.status, "active")));
-    for (const r of active) await settleReservation(tx, r.key, "reconciled");
-    // No usage row: whether the create executed is unknown, and the ledger holds executed calls only.
-    await failRun(tx, run, "submitting", "submission_unknown", { reason: why });
-  });
+  try {
+    await deps.db.transaction(async (tx) => {
+      const active = await tx
+        .select({ key: budgetReservations.operationKey })
+        .from(budgetReservations)
+        .where(and(eq(budgetReservations.scopeType, "run"), eq(budgetReservations.scopeId, run.id), eq(budgetReservations.status, "active")));
+      for (const r of active) await settleReservation(tx, r.key, "reconciled");
+      // No usage row: whether the create executed is unknown, and the ledger holds executed calls only.
+      const moved = await transitionRun(tx, run.id, "submitting", "failed", { errorCode: "submission_unknown" },
+        { type: "run_failed", details: { reason: why } });
+      if (!moved) throw new Rollback();
+    });
+  } catch (e) {
+    if (e instanceof Rollback) return afterLostCas(deps.db, run.id);
+    throw e;
+  }
   return DONE;
 }
 

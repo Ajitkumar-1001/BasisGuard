@@ -32,3 +32,46 @@ export async function drain(deps: WorkerDeps, o: { workerId: string; leaseMs: nu
   }
   return n;
 }
+
+/** Sanitized loop error: name and string code only, never the message (it can carry the database URL). */
+export type LoopError = { name: string; code?: string };
+export type LoopControl = {
+  step: () => Promise<boolean>;
+  isStopping: () => boolean;
+  sleep: (ms: number) => Promise<void>;
+  onError: (err: LoopError, consecutiveFailures: number, delayMs: number) => void;
+};
+const IDLE_MS = 500;
+const MAX_LOOP_BACKOFF_MS = 30_000;
+
+export const loopBackoffMs = (consecutiveFailures: number): number =>
+  Math.min(MAX_LOOP_BACKOFF_MS, 500 * 2 ** Math.min(consecutiveFailures, 6));
+
+export function sanitizeLoopError(e: unknown): LoopError {
+  if (!(e instanceof Error)) return { name: "non-error" };
+  const code: unknown = (e as { code?: unknown }).code;
+  return typeof code === "string" ? { name: e.name, code } : { name: e.name };
+}
+
+/**
+ * Worker main loop with a per-iteration error boundary. A failure outside runOnce's own try (e.g.
+ * leaseNextJob during a Postgres restart) is reported sanitized, backed off and retried until stopping;
+ * DB checkpoints and lease fencing make resuming safe.
+ */
+export async function runLoop(c: LoopControl): Promise<void> {
+  let failures = 0;
+  while (!c.isStopping()) {
+    let worked: boolean;
+    try {
+      worked = await c.step();
+      failures = 0;
+    } catch (e) {
+      failures++;
+      const delayMs = loopBackoffMs(failures);
+      c.onError(sanitizeLoopError(e), failures, delayMs);
+      await c.sleep(delayMs);
+      continue;
+    }
+    if (!worked) await c.sleep(IDLE_MS);
+  }
+}

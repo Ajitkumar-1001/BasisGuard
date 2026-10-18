@@ -2,13 +2,13 @@ import { fileURLToPath } from "node:url";
 import { CreateRunRequest } from "@basisguard/contracts";
 import { loadRateCard, TaskResultEnvelope } from "@basisguard/core";
 import {
-  budgetReservations, createRun, type DbHandle, expireLeasesForTest, getRun, leaseNextJob, listRunEvents,
-  openTestDb, providerArtifacts, usageEvents,
+  budgetReservations, createRun, type Db, type DbHandle, expireLeasesForTest, getRun, LeaseLostError, leaseNextJob, listRunEvents,
+  openTestDb, providerArtifacts, retryJob, usageEvents,
 } from "@basisguard/db";
 import { FIXTURE_ORIGIN, FixtureResearchProvider, ProviderError, type ResearchProvider } from "@basisguard/providers";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { backoffMs, MAX_ACQUIRE_ATTEMPTS, MAX_CONSECUTIVE_READ_FAILURES, processAcquireTask, retryDelayMs, type WorkerDeps } from "./acquire-task";
+import { backoffMs, MAX_ACQUIRE_ATTEMPTS, MAX_CONSECUTIVE_READ_FAILURES, processAcquireTask, retryDelayMs, type StepOutcome, type WorkerDeps } from "./acquire-task";
 import { drain, runOnce } from "./worker";
 
 const { card, sha256 } = loadRateCard(fileURLToPath(new URL("../../../config/rate-cards/parallel-2026-10-17.json", import.meta.url)));
@@ -359,5 +359,110 @@ describe("retry delays", () => {
       expect(d).toBeGreaterThanOrEqual(4000);
       expect(d).toBeLessThan(4250);
     }
+  });
+});
+
+/**
+ * Stale-lease races (adversarial panel). Worker A holds an expired lease and keeps acting; worker B holds
+ * the live lease and decides from a snapshot. `gatedDb` runs `before` (A's late progress) right before
+ * B's first transaction, so A's commits land between B's getRun and B's CAS. No real sleeps.
+ */
+describe("stale-lease races: a lost CAS on a non-terminal run never finishes the job", () => {
+  function gatedDb(before: () => Promise<void>): Db {
+    let fired = false;
+    return new Proxy(h.db, {
+      get(target, key) {
+        if (key === "transaction") {
+          return async (...args: Parameters<Db["transaction"]>) => {
+            if (!fired) { fired = true; await before(); }
+            return target.transaction(...args);
+          };
+        }
+        const v: unknown = Reflect.get(target, key, target);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+  }
+  const leaseAs = async (workerId: string) => (await leaseNextJob(h.db, { workerId, leaseMs: 30_000, jobTypes: ["acquire_task"] }))!;
+
+  for (const mode of ["created", "rate_limited"] as const) {
+    it(`B's submission_unknown CAS loses to A's late create (${mode}) ⇒ B retries, the run converges, one create`, async () => {
+      const inner = new FixtureResearchProvider();
+      const pA: ResearchProvider = {
+        createStructuredTask: async (i) => {
+          if (mode === "rate_limited") throw new ProviderError("provider_rate_limited", "429", "no", 1);
+          return inner.createStructuredTask(i);
+        },
+        getTaskStatus: (id) => inner.getTaskStatus(id), getTaskResult: (id) => inner.getTaskResult(id),
+      };
+      const runId = await newRun();
+      const jobA = await leaseAs("A");
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      let reached!: () => void;
+      const atSubmitting = new Promise<void>((r) => { reached = r; });
+      const aDone = processAcquireTask(deps(pA, { hooks: { afterSubmittingCommitted: async () => { reached(); await gate; } } }), jobA);
+      await atSubmitting; // A committed queued->submitting and stalls past its lease
+      await expireLeasesForTest(h.db);
+      const jobB = await leaseAs("B");
+      const outB = await processAcquireTask(deps(inner, { db: gatedDb(async () => { release(); await aDone; }) }), jobB);
+      const outA: StepOutcome = await aDone;
+      expect(outA.kind).toBe("retry");
+      expect((await getRun(h.db, runId))?.status).toBe(mode === "created" ? "researching" : "queued");
+      expect(outB).toMatchObject({ kind: "retry", delayMs: 0 });
+      await retryJob(h.db, jobB, 0, outB.kind === "retry" ? outB.reason : "");
+      await expect(retryJob(h.db, jobA, 0, "late")).rejects.toBeInstanceOf(LeaseLostError);
+      await drain(deps(inner), W);
+      expect(await getRun(h.db, runId)).toMatchObject({ status: "complete", errorCode: null });
+      expect(inner.createCalls).toHaveLength(1);
+    });
+  }
+
+  it("B's queued->submitting CAS loses to stale A's full submit ⇒ B retries (no reservation kept), the run is polled to complete", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const jobA = await leaseAs("A");
+    await expireLeasesForTest(h.db);
+    const jobB = await leaseAs("B");
+    let outA: StepOutcome | undefined;
+    const outB = await processAcquireTask(deps(provider, { db: gatedDb(async () => { outA = await processAcquireTask(deps(provider), jobA); }) }), jobB);
+    expect(outA).toEqual({ kind: "retry", delayMs: 0, reason: "poll" });
+    expect(outB).toMatchObject({ kind: "retry", delayMs: 0 });
+    expect(await h.db.select().from(budgetReservations)).toHaveLength(1); // B's reservation rolled back
+    await retryJob(h.db, jobB, 0, "lost race");
+    await expect(retryJob(h.db, jobA, 0, "poll")).rejects.toBeInstanceOf(LeaseLostError);
+    await drain(deps(provider), W);
+    expect((await getRun(h.db, runId))?.status).toBe("complete");
+    expect(provider.createCalls).toHaveLength(1);
+  });
+
+  it("B's budget_exhausted CAS loses to stale A's full submit (max_provider_calls=1) ⇒ B retries, the run completes", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun({ max_provider_calls: 1 });
+    const jobA = await leaseAs("A");
+    await expireLeasesForTest(h.db);
+    const jobB = await leaseAs("B");
+    const outB = await processAcquireTask(deps(provider, { db: gatedDb(async () => { await processAcquireTask(deps(provider), jobA); }) }), jobB);
+    expect(outB).toMatchObject({ kind: "retry", delayMs: 0 });
+    await retryJob(h.db, jobB, 0, "lost race");
+    await drain(deps(provider), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "complete", errorCode: null });
+    expect(provider.createCalls).toHaveLength(1);
+  });
+
+  it("B's deadline fail CAS loses to stale A's submit ⇒ B retries and the next step fails the researching run deadline_exceeded", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const jobA = await leaseAs("A");
+    await expireLeasesForTest(h.db);
+    const jobB = await leaseAs("B");
+    const late = () => new Date(Date.now() + 365 * 24 * 3600 * 1000);
+    const outB = await processAcquireTask(deps(provider, { now: late, db: gatedDb(async () => { await processAcquireTask(deps(provider), jobA); }) }), jobB);
+    expect((await getRun(h.db, runId))?.status).toBe("researching");
+    expect(outB).toMatchObject({ kind: "retry", delayMs: 0 });
+    await retryJob(h.db, jobB, 0, "lost race");
+    await drain(deps(provider, { now: late }), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "deadline_exceeded" });
+    expect(provider.createCalls).toHaveLength(1);
   });
 });

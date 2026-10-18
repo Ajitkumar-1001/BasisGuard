@@ -3,7 +3,7 @@ import { loadRuntimeConfig } from "@basisguard/core";
 import { createDb } from "@basisguard/db/runtime";
 import { createProvider, FIXTURE_ORIGIN } from "@basisguard/providers";
 import type { WorkerDeps } from "./acquire-task";
-import { runOnce } from "./worker";
+import { runLoop, runOnce } from "./worker";
 
 // Worker entrypoint (the only module with top-level side effects). No HTTP port, no listeners.
 // Never log `config` or `databaseUrl`: they carry credentials.
@@ -26,9 +26,16 @@ const workerId = `${hostname()}:${process.pid}`;
 let stopping = false;
 for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { stopping = true; });
 console.log(`basisguard worker ${workerId} started (mode=${config.mode}, db=${handle.databaseName})`);
-while (!stopping) {
-  const worked = await runOnce(deps, { workerId, leaseMs: 90_000 });
-  if (!worked) await new Promise((r) => setTimeout(r, 500));
+try {
+  await runLoop({
+    step: () => runOnce(deps, { workerId, leaseMs: 90_000 }),
+    isStopping: () => stopping,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    onError: (err, failures, delayMs) => {
+      console.error(`worker loop error name=${err.name} code=${err.code ?? "none"} consecutive=${failures}; retrying in ${delayMs}ms`);
+    },
+  });
+} finally {
+  await handle.close();
+  console.log("basisguard worker stopped");
 }
-await handle.close();
-console.log("basisguard worker stopped");
