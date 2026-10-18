@@ -1,0 +1,20 @@
+{
+  "version": "parallel-2026-10-17",
+  "retrieved_at": "2026-10-17",
+  "currency": "USD",
+  "source_urls": [
+    "https://docs.parallel.ai/getting-started/pricing",
+    "https://docs.parallel.ai/getting-started/rate-limits"
+  ],
+  "task_usd_per_run": {
+    "lite": "0.005", "base": "0.010", "core": "0.025", "core2x": "0.050", "pro": "0.100",
+    "ultra": "0.300", "ultra2x": "0.600", "ultra4x": "1.200", "ultra8x": "2.400"
+  },
+  "task_billing_note": "Charged per successful run only; failed runs not billed. Reservations use the full per-run price as the upper bound.",
+  "search_usd_per_request": { "turbo": "0.001", "fast": "0.001", "basic": "0.005", "advanced": "0.005" },
+  "search_included_results": 10,
+  "search_additional_result_usd": "0.001",
+  "extract_usd_per_url": "0.001",
+  "judge": { "vendor": "openai", "model": "gpt-4.1-mini", "usd_upper_bound_per_call": "0.02", "verified": false },
+  "unknown_cost_behavior": "block"
+}
