@@ -20,35 +20,78 @@ export async function openResetDb(): Promise<DbHandle> {
 
 export type WorkerProc = { child: ChildProcess; pid: number; output: () => string };
 
+/** startWorker failure; `pgid` is the (already SIGKILLed) process group of the failed spawn. */
+export class WorkerStartError extends Error {
+  constructor(message: string, readonly pgid: number) {
+    super(message);
+    this.name = "WorkerStartError";
+  }
+}
+
+/**
+ * Every worker group spawned in this Playwright process that has not exited yet. Safety net for paths that
+ * skip a spec's own cleanup (test timeout, failed start): `killAllWorkers()` from afterAll and on exit.
+ */
+const live = new Set<ChildProcess>();
+
+function killGroupNow(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // group already gone
+  }
+}
+
+/** Synchronously SIGKILLs every tracked worker process group. Safe to call repeatedly. */
+export function killAllWorkers(): void {
+  for (const child of live) killGroupNow(child);
+  live.clear();
+}
+
+process.on("exit", killAllWorkers);
+
 /**
  * Spawns `pnpm --filter @basisguard/worker start` in its own process group (pnpm -> tsx -> node), so a
  * group signal reaches the real worker. Resolves once the worker logs its start line; `pid` is the
- * worker's own process id parsed from that line.
+ * worker's own process id parsed from that line. On timeout or early exit the whole group is SIGKILLed
+ * before rejecting, so a failed start never leaves a polling worker behind.
  */
-export async function startWorker(): Promise<WorkerProc> {
+export async function startWorker(opts: { startTimeoutMs?: number } = {}): Promise<WorkerProc> {
+  const startTimeoutMs = opts.startTimeoutMs ?? 60_000;
   const child = spawn("pnpm", ["--filter", "@basisguard/worker", "start"], {
     cwd: ROOT,
     env: e2eEnv({ NODE_ENV: "development" }),
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  if (child.pid === undefined) throw new Error("failed to spawn worker (no pid)");
+  const pgid = child.pid;
+  live.add(child);
+  child.once("exit", () => live.delete(child));
   let buf = "";
   child.stdout?.on("data", (d: Buffer) => { buf += d.toString(); });
   child.stderr?.on("data", (d: Buffer) => { buf += d.toString(); });
   const pid = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`worker did not start in 60s:\n${buf}`)), 60_000);
+    let settled = false;
+    const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      killGroupNow(child);
+      reject(new WorkerStartError(message, pgid));
+    };
+    const timer = setTimeout(() => fail(`worker did not start in ${startTimeoutMs}ms:\n${buf}`), startTimeoutMs);
     const check = () => {
       const m = /basisguard worker \S+:(\d+) started/.exec(buf);
-      if (m) {
+      if (m && !settled) {
+        settled = true;
         clearTimeout(timer);
         resolve(Number(m[1]));
       }
     };
     child.stdout?.on("data", check);
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`worker exited early (code ${code}):\n${buf}`));
-    });
+    child.once("exit", (code) => fail(`worker exited early (code ${code}):\n${buf}`));
   });
   return { child, pid, output: () => buf };
 }

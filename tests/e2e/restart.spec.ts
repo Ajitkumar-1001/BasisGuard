@@ -3,7 +3,7 @@ import type { DbHandle } from "../../packages/db/src/client";
 import { expireLeasesForTest } from "../../packages/db/src/queue";
 import { getRun } from "../../packages/db/src/runs";
 import { jobQueue, usageEvents } from "../../packages/db/src/schema";
-import { killWorkerHard, openResetDb, startWorker, stopWorker } from "./helpers";
+import { killAllWorkers, killWorkerHard, openResetDb, startWorker, stopWorker } from "./helpers";
 
 /**
  * Phase 1 hard gate: keyless write-path restart/idempotency.
@@ -28,7 +28,9 @@ let handle: DbHandle;
 test.beforeAll(async () => {
   handle = await openResetDb();
 });
+// Safety net: a test timeout abandons the body (its finally/stopWorker never runs), so kill any w1/w2 left.
 test.afterAll(async () => {
+  killAllWorkers();
   await handle.close();
 });
 

@@ -1,19 +1,23 @@
 import { expect, test } from "@playwright/test";
 import type { DbHandle } from "../../packages/db/src/client";
-import { openResetDb, startWorker, stopWorker, type WorkerProc } from "./helpers";
+import { killAllWorkers, openResetDb, startWorker, stopWorker, type WorkerProc } from "./helpers";
 
 // Must equal FIXTURE_ORIGIN in packages/providers/src/fixture-provider.ts (literal: that module imports JSON).
 const FIXTURE_ORIGIN = "hand-authored:parallel-web@1.3.5-types";
 
-let worker: WorkerProc;
-let handle: DbHandle;
+let worker: WorkerProc | undefined;
+let handle: DbHandle | undefined;
 test.beforeAll(async () => {
   handle = await openResetDb();
   worker = await startWorker();
 });
 test.afterAll(async () => {
-  await stopWorker(worker);
-  await handle.close();
+  try {
+    if (worker) await stopWorker(worker);
+  } finally {
+    killAllWorkers();
+    await handle?.close();
+  }
 });
 
 test("double-clicked submit creates one run that completes and survives refresh", async ({ page, request }) => {
