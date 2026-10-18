@@ -3,12 +3,12 @@ import type { DbHandle } from "../../packages/db/src/client";
 import { openResetDb } from "./helpers";
 
 // No worker: these tests only exercise the HTTP write path; created runs stay queued.
-let handle: DbHandle;
+let handle: DbHandle | undefined;
 test.beforeAll(async () => {
   handle = await openResetDb();
 });
 test.afterAll(async () => {
-  await handle.close();
+  await handle?.close(); // beforeAll may have failed before assigning it
 });
 
 const body = (key: string, over: Record<string, unknown> = {}) => ({

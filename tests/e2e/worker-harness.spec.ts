@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { killAllWorkers, startWorker, WorkerStartError } from "./helpers";
+import { killAllWorkers, openResetDb, startWorker, WorkerStartError } from "./helpers";
 
 /**
  * Teardown safety net for spawned workers: a worker group must never outlive a failed start or a spec that
@@ -23,8 +23,23 @@ async function waitGroupDead(pgid: number, ms: number): Promise<boolean> {
   return !groupAlive(pgid);
 }
 
+// The workers spawned here poll basisguard_test: start from empty run tables so they never pick up (and
+// complete) runs another spec file left queued.
+test.beforeAll(async () => {
+  const h = await openResetDb();
+  await h.close();
+});
 test.afterAll(() => {
   killAllWorkers();
+});
+
+test("a worker command that cannot be spawned rejects with WorkerStartError instead of crashing the runner", async () => {
+  const err = await startWorker({ command: "/nonexistent/basisguard-no-such-binary" }).then(
+    () => undefined,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(WorkerStartError);
+  expect((err as Error).message).toMatch(/failed to spawn worker/);
 });
 
 test("a worker that fails to start in time has its process group killed", async () => {
@@ -33,7 +48,7 @@ test("a worker that fails to start in time has its process group killed", async 
     (e: unknown) => e,
   );
   expect(err).toBeInstanceOf(WorkerStartError);
-  expect(await waitGroupDead((err as WorkerStartError).pgid, 5_000)).toBe(true);
+  expect(await waitGroupDead((err as WorkerStartError).pgid!, 5_000)).toBe(true);
 });
 
 test("killAllWorkers kills every worker group a spec left running", async () => {

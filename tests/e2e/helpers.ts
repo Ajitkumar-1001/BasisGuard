@@ -20,9 +20,9 @@ export async function openResetDb(): Promise<DbHandle> {
 
 export type WorkerProc = { child: ChildProcess; pid: number; output: () => string };
 
-/** startWorker failure; `pgid` is the (already SIGKILLed) process group of the failed spawn. */
+/** startWorker failure; `pgid` is the (already SIGKILLed) process group, or null when nothing was spawned. */
 export class WorkerStartError extends Error {
-  constructor(message: string, readonly pgid: number) {
+  constructor(message: string, readonly pgid: number | null) {
     super(message);
     this.name = "WorkerStartError";
   }
@@ -57,15 +57,20 @@ process.on("exit", killAllWorkers);
  * worker's own process id parsed from that line. On timeout or early exit the whole group is SIGKILLed
  * before rejecting, so a failed start never leaves a polling worker behind.
  */
-export async function startWorker(opts: { startTimeoutMs?: number } = {}): Promise<WorkerProc> {
+export async function startWorker(opts: { startTimeoutMs?: number; command?: string } = {}): Promise<WorkerProc> {
   const startTimeoutMs = opts.startTimeoutMs ?? 60_000;
-  const child = spawn("pnpm", ["--filter", "@basisguard/worker", "start"], {
+  const child = spawn(opts.command ?? "pnpm", ["--filter", "@basisguard/worker", "start"], {
     cwd: ROOT,
     env: e2eEnv({ NODE_ENV: "development" }),
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  if (child.pid === undefined) throw new Error("failed to spawn worker (no pid)");
+  if (child.pid === undefined) {
+    // spawn failed (e.g. ENOENT): node reports it as an async 'error' event, which would otherwise be
+    // unhandled and crash the Playwright worker.
+    const cause = await new Promise<Error>((resolve) => child.once("error", resolve));
+    throw new WorkerStartError(`failed to spawn worker: ${cause.message}`, null);
+  }
   const pgid = child.pid;
   live.add(child);
   child.once("exit", () => live.delete(child));
@@ -92,6 +97,7 @@ export async function startWorker(opts: { startTimeoutMs?: number } = {}): Promi
     };
     child.stdout?.on("data", check);
     child.once("exit", (code) => fail(`worker exited early (code ${code}):\n${buf}`));
+    child.once("error", (e) => fail(`worker process error: ${e.message}:\n${buf}`));
   });
   return { child, pid, output: () => buf };
 }
