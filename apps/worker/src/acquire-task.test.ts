@@ -3,7 +3,7 @@ import { CreateRunRequest } from "@basisguard/contracts";
 import { loadRateCard, TaskResultEnvelope } from "@basisguard/core";
 import {
   budgetReservations, createRun, type Db, type DbHandle, expireLeasesForTest, getRun, LeaseLostError, leaseNextJob, listRunEvents,
-  openTestDb, providerArtifacts, retryJob, usageEvents,
+  jobQueue, openTestDb, providerArtifacts, retryJob, usageEvents,
 } from "@basisguard/db";
 import { FIXTURE_ORIGIN, FixtureResearchProvider, ProviderError, type ResearchProvider } from "@basisguard/providers";
 import { eq } from "drizzle-orm";
@@ -464,5 +464,60 @@ describe("stale-lease races: a lost CAS on a non-terminal run never finishes the
     await drain(deps(provider, { now: late }), W);
     expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "deadline_exceeded" });
     expect(provider.createCalls).toHaveLength(1);
+  });
+});
+
+describe("lease loss aborts the step (heartbeat false ⇒ no further billable work)", () => {
+  it("an already-aborted lease signal throws LeaseLostError before any reservation or create", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const ac = new AbortController();
+    ac.abort();
+    await expect(processAcquireTask(deps(provider), await lease(), ac.signal)).rejects.toBeInstanceOf(LeaseLostError);
+    expect(provider.createCalls).toHaveLength(0);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "queued" });
+    expect(await h.db.select().from(budgetReservations)).toHaveLength(0);
+  });
+
+  it("a lease lost after 'submitting' committed stops before the create; the next holder fails closed with zero creates", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const ac = new AbortController();
+    const hooks = { afterSubmittingCommitted: async () => { ac.abort(); } };
+    await expect(processAcquireTask(deps(provider, { hooks }), await lease(), ac.signal)).rejects.toBeInstanceOf(LeaseLostError);
+    expect(provider.createCalls).toHaveLength(0);
+    await expireLeasesForTest(h.db);
+    await drain(deps(provider), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "submission_unknown" });
+    expect(provider.createCalls).toHaveLength(0);
+  });
+
+  it("runOnce: a heartbeat that finds the lease stolen aborts the in-flight step before the create", async () => {
+    const provider = new FixtureResearchProvider();
+    await newRun();
+    const hooks = {
+      afterSubmittingCommitted: async () => {
+        await expireLeasesForTest(h.db);
+        await leaseNextJob(h.db, { workerId: "thief", leaseMs: 30_000, jobTypes: ["acquire_task"] });
+        await new Promise((r) => setTimeout(r, 2_600)); // heartbeats at ~1 s and ~2 s report the lease lost
+      },
+    };
+    expect(await runOnce(deps(provider, { hooks }), { workerId: "w1", leaseMs: 3_000 })).toBe(true);
+    expect(provider.createCalls).toHaveLength(0);
+  });
+});
+
+describe("unexpected step errors", () => {
+  it("the retry delay after an unexpected error never sleeps past the run deadline", async () => {
+    const runId = await newRun();
+    const run = (await getRun(h.db, runId))!;
+    // The worker's clock reads 500 ms before the deadline; unclamped, backoffMs(1) would be >= 2 s.
+    const now = () => new Date(run.deadlineAt.getTime() - 500);
+    const hooks = { afterSubmittingCommitted: async () => { throw new Error("unexpected"); } };
+    const before = Date.now();
+    expect(await runOnce(deps(new FixtureResearchProvider(), { hooks, now }), W)).toBe(true);
+    const [job] = await h.db.select().from(jobQueue).where(eq(jobQueue.runId, runId));
+    expect(job).toMatchObject({ status: "retry_wait", lastError: "Error: unexpected" });
+    expect(job!.availableAt.getTime() - before).toBeLessThan(1_500);
   });
 });

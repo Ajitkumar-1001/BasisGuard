@@ -1,7 +1,7 @@
 import { isTerminalRunStatus, type RateCard, type RunErrorCode, type RunStatus, StoredRunInput } from "@basisguard/contracts";
 import { TaskResultEnvelope } from "@basisguard/core";
 import {
-  appendRunEvent, budgetReservations, type Db, type DbOrTx, getRun, insertArtifact, jobQueue, type LeasedJob, recordUsage,
+  appendRunEvent, budgetReservations, type Db, type DbOrTx, getRun, insertArtifact, jobQueue, type LeasedJob, LeaseLostError, recordUsage,
   reserveRunBudget, type RunRow, settleReservation, transitionRun,
 } from "@basisguard/db/runtime";
 import { ProviderError, type ResearchProvider, type ResearchTaskInput } from "@basisguard/providers";
@@ -72,8 +72,19 @@ async function failRun(
   return moved ? DONE : afterLostCas(db, run.id);
 }
 
-export async function processAcquireTask(deps: WorkerDeps, job: LeasedJob): Promise<StepOutcome> {
+/** Throws LeaseLostError once the caller's heartbeat has found this lease lost (another worker owns the job). */
+function assertLeaseHeld(job: LeasedJob, lease: AbortSignal | undefined): void {
+  if (lease?.aborted) throw new LeaseLostError(job.id);
+}
+
+/**
+ * One step of the acquire_task state machine. `lease` is aborted by the caller when a heartbeat finds the
+ * lease lost; the step then stops (LeaseLostError) before any further billable work: at entry, before the
+ * budget reservation, and right before the provider create.
+ */
+export async function processAcquireTask(deps: WorkerDeps, job: LeasedJob, lease?: AbortSignal): Promise<StepOutcome> {
   if (!job.runId) throw new Error(`acquire_task job ${job.id} has no run_id`);
+  assertLeaseHeld(job, lease);
   const run = await getRun(deps.db, job.runId);
   if (!run || isTerminalRunStatus(run.status)) return DONE;
 
@@ -87,7 +98,7 @@ export async function processAcquireTask(deps: WorkerDeps, job: LeasedJob): Prom
   }
   switch (run.status) {
     case "queued":
-      return submit(deps, run, job);
+      return submit(deps, run, job, lease);
     case "researching":
       return poll(deps, run, job);
     default:
@@ -104,8 +115,9 @@ function taskInput(run: RunRow): ResearchTaskInput {
   };
 }
 
-async function submit(deps: WorkerDeps, run: RunRow, job: LeasedJob): Promise<StepOutcome> {
+async function submit(deps: WorkerDeps, run: RunRow, job: LeasedJob, lease: AbortSignal | undefined): Promise<StepOutcome> {
   const input = taskInput(run);
+  assertLeaseHeld(job, lease);
   const price = deps.rateCard.task_usd_per_run[input.processor];
   const opKey = `task_create:${run.id}:a${job.attemptCount}`;
   const ledger = { runId: run.id, operation: "task_create", vendor: deps.vendor, httpRequestCount: 1, rateCardVersion: deps.rateCard.version };
@@ -134,6 +146,9 @@ async function submit(deps: WorkerDeps, run: RunRow, job: LeasedJob): Promise<St
   if (!reserved) return DONE;
 
   await deps.hooks?.afterSubmittingCommitted?.();
+  // Lease lost after `submitting` committed: stopping here costs nothing upstream; the new holder finds
+  // `submitting` without provider_run_id and fails closed (FR-02) instead of an orphaned paid Task.
+  assertLeaseHeld(job, lease);
   const started = Date.now();
   let created: Awaited<ReturnType<ResearchProvider["createStructuredTask"]>>;
   try {

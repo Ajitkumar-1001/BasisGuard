@@ -3,7 +3,7 @@ import { loadRuntimeConfig } from "@basisguard/core";
 import { createDb } from "@basisguard/db/runtime";
 import { createProvider, FIXTURE_ORIGIN } from "@basisguard/providers";
 import type { WorkerDeps } from "./acquire-task";
-import { runLoop, runOnce } from "./worker";
+import { createStopper, runLoop, runOnce } from "./worker";
 
 // Worker entrypoint (the only module with top-level side effects). No HTTP port, no listeners.
 // Never log `config` or `databaseUrl`: they carry credentials.
@@ -23,14 +23,14 @@ const deps: WorkerDeps = {
   pollDelayMs: config.mode === "live" ? 5_000 : 200,
 };
 const workerId = `${hostname()}:${process.pid}`;
-let stopping = false;
-for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { stopping = true; });
+const stopper = createStopper();
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, stopper.stop);
 console.log(`basisguard worker ${workerId} started (mode=${config.mode}, db=${handle.databaseName})`);
 try {
   await runLoop({
     step: () => runOnce(deps, { workerId, leaseMs: 90_000 }),
-    isStopping: () => stopping,
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    isStopping: stopper.isStopping,
+    sleep: stopper.sleep, // cut short by SIGINT/SIGTERM
     onError: (err, failures, delayMs) => {
       console.error(`worker loop error name=${err.name} code=${err.code ?? "none"} consecutive=${failures}; retrying in ${delayMs}ms`);
     },

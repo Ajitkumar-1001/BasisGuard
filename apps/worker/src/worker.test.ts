@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loopBackoffMs, runLoop, type LoopError } from "./worker";
+import { createStopper, loopBackoffMs, runLoop, type LoopError } from "./worker";
 
 describe("runLoop error boundary", () => {
   it("a transient lease/DB error is logged sanitized, backed off and the loop continues until stopped", async () => {
@@ -52,5 +52,34 @@ describe("runLoop error boundary", () => {
     expect(loopBackoffMs(1)).toBe(1000);
     expect(loopBackoffMs(2)).toBe(2000);
     expect(loopBackoffMs(50)).toBe(30_000);
+  });
+});
+
+describe("createStopper (interruptible shutdown)", () => {
+  it("stop() wakes a pending sleep immediately and later sleeps return at once", async () => {
+    const s = createStopper();
+    const started = Date.now();
+    const pending = s.sleep(60_000);
+    setTimeout(() => s.stop(), 20);
+    await pending;
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(s.isStopping()).toBe(true);
+    const again = Date.now();
+    await s.sleep(60_000);
+    expect(Date.now() - again).toBeLessThan(100);
+  });
+
+  it("a signal during the loop's error backoff ends runLoop without waiting out the backoff", async () => {
+    const s = createStopper();
+    let steps = 0;
+    const started = Date.now();
+    await runLoop({
+      step: async () => { steps++; throw new Error("db down"); },
+      isStopping: s.isStopping,
+      sleep: s.sleep,
+      onError: () => { setTimeout(() => s.stop(), 20); }, // the first backoff is loopBackoffMs(1) = 1 s
+    });
+    expect(steps).toBe(1);
+    expect(Date.now() - started).toBeLessThan(loopBackoffMs(1) / 2);
   });
 });
