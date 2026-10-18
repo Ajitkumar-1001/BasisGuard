@@ -32,6 +32,7 @@ type LeaseOptions = { workerId: string; leaseMs: number; jobTypes: readonly JobT
  * per outer row and lease several jobs. Requires a non-empty `jobTypes`.
  */
 export function buildLeaseStatement(db: DbOrTx, o: LeaseOptions) {
+  if (o.jobTypes.length === 0) throw new Error("buildLeaseStatement requires a non-empty jobTypes list");
   const ready = db
     .select({ id: jobQueue.id })
     .from(jobQueue)

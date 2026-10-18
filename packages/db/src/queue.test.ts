@@ -22,6 +22,12 @@ async function rowOf(id: string) {
   return row!;
 }
 
+describe("buildLeaseStatement", () => {
+  it("refuses an empty jobTypes list instead of building a degenerate IN ()", () => {
+    expect(() => buildLeaseStatement(h.db, { workerId: "x", leaseMs: 30_000, jobTypes: [] })).toThrow(/non-empty jobTypes/);
+  });
+});
+
 describe("job queue", () => {
   it("leases a ready job exactly once across concurrent workers (SKIP LOCKED)", async () => {
     await seed(1);
