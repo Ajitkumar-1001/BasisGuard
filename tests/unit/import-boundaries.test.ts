@@ -15,7 +15,7 @@ function sources(dir: string): string[] {
 }
 const files = [...sources("frontend"), ...sources("apps"), ...sources("packages"), ...sources("scripts")];
 const importsOf = (p: string, mod: string) =>
-  new RegExp(`(from\\s+|import\\s*\\(\\s*|vi\\.mock\\(\\s*)["']${mod.replace("/", "\\/")}["']`).test(readFileSync(join(ROOT, p), "utf8"));
+  new RegExp(`(from\\s+|import\\s+|import\\s*\\(\\s*|vi\\.mock\\(\\s*)["']${mod.replace("/", "\\/")}["']`).test(readFileSync(join(ROOT, p), "utf8"));
 
 describe("import boundaries", () => {
   it("parallel-web is imported only by the live adapter and the Gate A probe (and test mocks)", () => {
