@@ -18,12 +18,15 @@ function collect(dir: string): string[] {
   return out;
 }
 
+const PALETTE_RE =
+  /\b(?:bg|text|border|ring|outline|fill|stroke|from|via|to|divide|placeholder|decoration|accent|caret)-(?:gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|black|white)(?:-\d{2,3})?(?:\/\d+)?\b/;
+
 type Rule = { name: string; re: RegExp; appliesTo?: RegExp };
 
 const RULES: Rule[] = [
   {
     name: "named Tailwind palette class",
-    re: /\b(?:bg|text|border|ring|outline|fill|stroke|from|via|to|divide|placeholder|decoration|accent|caret)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|black|white)(?:-\d{2,3})?(?:\/\d+)?\b/,
+    re: PALETTE_RE,
   },
   { name: "gradient", re: /gradient/i },
   { name: "shadow utility", re: /\bshadow(?:-[a-z0-9]+)?\b/, appliesTo: /\.tsx?$/ },
@@ -37,6 +40,11 @@ const RULES: Rule[] = [
 
 describe("frontend source guard", () => {
   const files = collect(SRC_ROOT);
+
+  it("allows spec tokens (slate) but still rejects named palette classes", () => {
+    expect(PALETTE_RE.test("bg-slate-tint text-slate")).toBe(false);
+    expect(PALETTE_RE.test("bg-gray-200")).toBe(true);
+  });
 
   it("scans source files", () => {
     expect(files.length).toBeGreaterThan(0);
