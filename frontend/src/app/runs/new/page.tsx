@@ -1,9 +1,10 @@
+import { PageHeader } from "@/ui/page-header";
 import { NewRunForm } from "./new-run-form";
 
 export default function NewRunPage() {
   return (
-    <section className="max-w-xl space-y-4">
-      <h1 className="text-xl font-semibold">New research run</h1>
+    <section className="max-w-xl">
+      <PageHeader title="New research run" subtitle="Run the startup facts profile for one company." />
       <NewRunForm />
     </section>
   );
