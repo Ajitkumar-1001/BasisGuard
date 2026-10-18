@@ -90,6 +90,11 @@ export interface RunView {
   extractUrlUnits: number | null;
   spendEstimatedUsd: string | null;
   spendReportedUsd: string | null;
+  /** Sum over all cost kinds (API runs only); fixtures use the estimated/reported split. */
+  spendTotalUsd: string | null;
+  /** Call counts per cost kind; null when not tracked (fixtures). */
+  costKindCalls: Record<"reported" | "estimated" | "unknown", number> | null;
+  providerRunId: string | null;
   latencyMs: number | null;
   taskOutput: unknown;
   nativeBasis: BasisEntry[];

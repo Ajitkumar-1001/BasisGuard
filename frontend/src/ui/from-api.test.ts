@@ -49,7 +49,10 @@ describe("fromApiDetail", () => {
       taskSnapshotHash: "ab".repeat(32),
       fixtureOrigin: "hand-authored:x",
       providerCalls: 3,
-      spendEstimatedUsd: "0.010000",
+      spendEstimatedUsd: null,
+      spendTotalUsd: "0.010000",
+      costKindCalls: { reported: 0, estimated: 3, unknown: 0 },
+      providerRunId: "trun_1",
       claims: [],
       evidence: [],
     });
@@ -93,6 +96,22 @@ describe("fromApiDetail", () => {
         { url: "https://ok2.example.com", title: "T", excerpt: "" },
       ],
     });
+  });
+
+  it("carries unknown-cost call counts", () => {
+    const v = fromApiDetail(
+      detail({ spend: { usd: "0.02", httpRequests: 5, byCostKind: { reported: 1, estimated: 2, unknown: 2 } } }),
+      [],
+    );
+    expect(v.costKindCalls).toEqual({ reported: 1, estimated: 2, unknown: 2 });
+  });
+
+  it.each([null, [], "x"])("tolerates a malformed input %j", (input) => {
+    const base = detail();
+    const v = fromApiDetail({ ...base, run: { ...base.run, input: input as unknown as Record<string, unknown> } }, []);
+    expect(v.company).toBe("");
+    expect(v.domain).toBeNull();
+    expect(v.asOfDate).toBe("");
   });
 
   it("maps a missing task artifact to null output and empty basis", () => {

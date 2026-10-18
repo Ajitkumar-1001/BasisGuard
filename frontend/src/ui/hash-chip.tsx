@@ -42,7 +42,7 @@ export function HashChip({ value, label }: { value: string; label: string }) {
       >
         <Icon name="copy" />
       </button>
-      <span aria-live="polite" className="text-xs text-moss">
+      <span aria-live="polite" className={`text-xs ${copied === "failed" ? "text-brick" : "text-moss"}`}>
         {copied === "copied" ? "Copied" : copied === "failed" ? "Copy failed" : ""}
       </span>
     </span>

@@ -47,31 +47,41 @@ function toBasis(raw: unknown): BasisEntry[] {
   return out;
 }
 
+function toCostKindCalls(raw: unknown): RunView["costKindCalls"] {
+  if (!isRecord(raw)) return null;
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return { reported: n(raw.reported), estimated: n(raw.estimated), unknown: n(raw.unknown) };
+}
+
 function stringify(details: unknown): string {
   return JSON.stringify(details) ?? "";
 }
 
 export function fromApiDetail(detail: ApiRunDetail, events: ApiRunEvent[]): RunView {
   const { run, taskArtifact, spend } = detail;
-  const domain = run.input.official_domain;
+  const input = isRecord(run.input) ? run.input : {};
+  const domain = input.official_domain;
   return {
     id: run.id,
     source: "api",
-    company: String(run.input.company_name ?? ""),
+    company: String(input.company_name ?? ""),
     domain: typeof domain === "string" && domain !== "" ? domain : null,
     policy: run.policy,
     processor: run.processor,
     mode: null,
     status: run.status,
     errorCode: run.errorCode,
-    asOfDate: String(run.input.as_of_date ?? ""),
+    asOfDate: String(input.as_of_date ?? ""),
     createdAt: run.createdAt,
     taskSnapshotHash: taskArtifact?.contentHash ?? null,
     fixtureOrigin: taskArtifact?.fixtureOrigin ?? null,
     providerCalls: spend.httpRequests,
     extractUrlUnits: null,
-    spendEstimatedUsd: spend.usd,
+    spendEstimatedUsd: null,
     spendReportedUsd: null,
+    spendTotalUsd: spend.usd,
+    costKindCalls: toCostKindCalls(spend.byCostKind),
+    providerRunId: run.providerRunId,
     latencyMs: null,
     taskOutput: taskArtifact?.content ?? null,
     nativeBasis: toBasis(taskArtifact?.basis),

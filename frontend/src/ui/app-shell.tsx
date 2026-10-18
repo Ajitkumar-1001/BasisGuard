@@ -61,7 +61,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Suspense>
         </nav>
         <div className="space-y-2 border-t border-line px-4 py-4 text-xs text-ink-muted">
-          <p className="font-mono">fixture · prototype</p>
+          <p className="font-mono">UI prototype</p>
           <p>Independent tool built on Parallel APIs — not a Parallel product</p>
         </div>
       </aside>
@@ -78,7 +78,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
         <footer className="border-t border-line px-4 py-3 text-xs text-ink-muted sm:px-6 lg:hidden">
-          <p className="font-mono">fixture · prototype</p>
+          <p className="font-mono">UI prototype</p>
           <p>Independent tool built on Parallel APIs — not a Parallel product</p>
         </footer>
       </div>

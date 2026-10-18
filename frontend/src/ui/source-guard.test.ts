@@ -21,6 +21,9 @@ function collect(dir: string): string[] {
 const PALETTE_RE =
   /\b(?:bg|text|border|ring|outline|fill|stroke|from|via|to|divide|placeholder|decoration|accent|caret)-(?:gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|black|white)(?:-\d{2,3})?(?:\/\d+)?\b/;
 
+const SLATE_STOP_RE =
+  /\b(?:bg|text|border|ring|outline|fill|stroke|divide|placeholder|decoration|accent|caret)-slate-\d{2,3}\b/;
+
 type Rule = { name: string; re: RegExp; appliesTo?: RegExp };
 
 const RULES: Rule[] = [
@@ -28,6 +31,13 @@ const RULES: Rule[] = [
     name: "named Tailwind palette class",
     re: PALETTE_RE,
   },
+  {
+    name: "Tailwind default slate stop",
+    re: SLATE_STOP_RE,
+  },
+  { name: "arbitrary colour value", re: /-\[(?:#|rgb|hsl|oklch)/ },
+  { name: "scale utility", re: /\bscale-\d/ },
+  { name: "CSS @import url", re: /@import\s+url\(/ },
   { name: "gradient", re: /gradient/i },
   { name: "shadow utility", re: /\bshadow(?:-[a-z0-9]+)?\b/, appliesTo: /\.tsx?$/ },
   { name: "box-shadow", re: /box-shadow/, appliesTo: /\.css$/ },
@@ -44,6 +54,11 @@ describe("frontend source guard", () => {
   it("allows spec tokens (slate) but still rejects named palette classes", () => {
     expect(PALETTE_RE.test("bg-slate-tint text-slate")).toBe(false);
     expect(PALETTE_RE.test("bg-gray-200")).toBe(true);
+  });
+
+  it("rejects Tailwind default slate stops", () => {
+    expect(SLATE_STOP_RE.test("bg-slate-200")).toBe(true);
+    expect(SLATE_STOP_RE.test("bg-slate-tint text-slate")).toBe(false);
   });
 
   it("scans source files", () => {

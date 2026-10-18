@@ -29,8 +29,20 @@ function StatStrip({ view }: { view: RunView }) {
   const stats: { label: string; value: string }[] = [
     { label: "Provider calls", value: formatCount(view.providerCalls) },
     { label: "Extract URL units", value: formatCount(view.extractUrlUnits) },
-    { label: "Estimated spend", value: formatUsd(view.spendEstimatedUsd) },
-    { label: "Reported spend", value: formatUsd(view.spendReportedUsd) },
+    ...(view.spendTotalUsd !== null
+      ? [{ label: "Spend (all cost kinds)", value: formatUsd(view.spendTotalUsd) }]
+      : [
+          { label: "Estimated spend", value: formatUsd(view.spendEstimatedUsd) },
+          { label: "Reported spend", value: formatUsd(view.spendReportedUsd) },
+        ]),
+    ...(view.costKindCalls
+      ? [
+          {
+            label: "Unknown-cost calls",
+            value: `${view.costKindCalls.unknown} of ${view.costKindCalls.reported + view.costKindCalls.estimated + view.costKindCalls.unknown}`,
+          },
+        ]
+      : []),
     { label: "Latency", value: formatLatency(view.latencyMs) },
   ];
   return (
@@ -363,6 +375,7 @@ export function RunInspector({ view }: { view: RunView }) {
         asOfDate={view.asOfDate}
         taskSnapshotHash={view.taskSnapshotHash}
         fixtureOrigin={view.fixtureOrigin}
+        providerRunId={view.providerRunId}
       />
       <StatStrip view={view} />
       {IN_PROGRESS.has(view.status) ? (

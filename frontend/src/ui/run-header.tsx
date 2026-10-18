@@ -16,6 +16,7 @@ type RunHeaderProps = Pick<
   | "asOfDate"
   | "taskSnapshotHash"
   | "fixtureOrigin"
+  | "providerRunId"
 >;
 
 function Meta({ label, children }: { label: string; children: React.ReactNode }) {
@@ -28,13 +29,19 @@ function Meta({ label, children }: { label: string; children: React.ReactNode })
 }
 
 export function RunHeader(props: RunHeaderProps) {
-  const { company, domain, status, errorCode, policy, processor, mode, asOfDate, taskSnapshotHash, fixtureOrigin } =
+  const { company, domain, status, errorCode, policy, processor, mode, asOfDate, taskSnapshotHash, fixtureOrigin, providerRunId } =
     props;
   return (
     <header className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <h1 className="min-w-0 break-words text-2xl font-semibold text-ink">{company || DASH}</h1>
-        <StatusBadge meta={RUN_STATUS_META[status]} code={status} codeTestId="run-status" />
+        {RUN_STATUS_META[status] ? (
+          <StatusBadge meta={RUN_STATUS_META[status]} code={status} codeTestId="run-status" />
+        ) : (
+          <code className="num text-xs text-ink-muted" data-testid="run-status">
+            {status}
+          </code>
+        )}
         {policy === "baseline" ? <StatusBadge meta={FIELD_STATE_META.unverified} code="unverified" /> : null}
         {errorCode ? (
           <span className="inline-flex items-center gap-2 text-xs text-ink-muted">
@@ -55,6 +62,9 @@ export function RunHeader(props: RunHeaderProps) {
         </Meta>
         <Meta label="Mode">
           <code className="num">{mode ?? DASH}</code>
+        </Meta>
+        <Meta label="Provider run">
+          <code className="num">{providerRunId ?? DASH}</code>
         </Meta>
         <Meta label="As of">
           <span className="num">{asOfDate}</span>
