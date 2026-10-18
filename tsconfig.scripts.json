@@ -1,1 +1,1 @@
-{ "extends": "./tsconfig.base.json", "include": ["scripts"] }
+{ "extends": "./tsconfig.base.json", "include": ["scripts", "tests/e2e", "playwright.config.ts"] }
