@@ -23,6 +23,11 @@ describe("import boundaries", () => {
     expect(files.filter((p) => importsOf(p, "parallel-web") && !allowed(p))).toEqual([]);
   });
 
+  it("only the live client factory constructs the Parallel SDK client (base URL pinned, maxRetries 0)", () => {
+    const constructs = (p: string) => /new\s+Parallel\s*\(/.test(readFileSync(join(ROOT, p), "utf8"));
+    expect(files.filter((p) => constructs(p) && !p.endsWith(".test.ts"))).toEqual(["packages/providers/src/live/client.ts"]);
+  });
+
   it("the web app never imports providers or parallel-web (only the worker calls upstream)", () => {
     const web = files.filter((p) => p.startsWith("frontend/"));
     expect(web.length).toBeGreaterThan(0); // guards against a vacuous scan if the web app path changes

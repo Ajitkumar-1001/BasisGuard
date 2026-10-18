@@ -39,6 +39,16 @@ export function parseProbeArgs(argv: string[], today: string): ProbeArgs {
   return out;
 }
 
+/**
+ * Defense in depth on top of the pinned client baseURL: the probe sends the real PARALLEL_API_KEY, so it
+ * refuses to run at all while PARALLEL_BASE_URL is present (even blank) rather than rely on the pin alone.
+ */
+export function assertNoBaseUrlOverride(env: Record<string, string | undefined>): void {
+  if (env.PARALLEL_BASE_URL !== undefined) {
+    throw new Error("PARALLEL_BASE_URL is set; refusing to send PARALLEL_API_KEY anywhere but the pinned https://api.parallel.ai. Unset it and re-run.");
+  }
+}
+
 /** Creates `<dir>/probe.lock` exclusively. A second probe is refused until a human deletes the lock. */
 export async function acquireProbeLock(dir: string): Promise<string> {
   await mkdir(dir, { recursive: true });

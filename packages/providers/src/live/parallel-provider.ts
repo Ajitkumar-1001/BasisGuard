@@ -1,5 +1,6 @@
 import Parallel from "parallel-web";
 import { ProviderError } from "../errors";
+import { createParallelClient } from "./client";
 import { mapUpstreamStatus } from "../status";
 import { buildTaskRunCreateRequest, type TaskRunCreateRequest } from "../task-spec";
 import type { ResearchProvider } from "../types";
@@ -25,9 +26,8 @@ export function mapSdkError(e: unknown): ProviderError {
 }
 
 export function createParallelProvider(apiKey: string, client?: ParallelLike): ResearchProvider {
-  // maxRetries 0: SDK default (2) silently replays POST /v1/tasks/runs; the worker owns retries (D-005).
-  // baseURL pinned: the SDK would otherwise read PARALLEL_BASE_URL from the environment and could redirect the API key.
-  const c: ParallelLike = client ?? new Parallel({ apiKey, baseURL: "https://api.parallel.ai", maxRetries: 0, timeout: 60_000 });
+  // createParallelClient pins baseURL and sets maxRetries 0 (the worker owns retries, D-005).
+  const c: ParallelLike = client ?? createParallelClient(apiKey, { timeoutMs: 60_000 });
   const call = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
       return await fn();

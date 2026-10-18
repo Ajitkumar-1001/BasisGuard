@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { acquireProbeLock, parseProbeArgs } from "./gate-a-probe-lib";
+import { acquireProbeLock, assertNoBaseUrlOverride, parseProbeArgs } from "./gate-a-probe-lib";
 
 describe("gate-a probe args", () => {
   it("is unauthorized unless the explicit flag is present", () => {
@@ -37,5 +37,15 @@ describe("gate-a probe lock", () => {
     const dir = mkdtempSync(join(tmpdir(), "gate-a-"));
     await expect(acquireProbeLock(dir)).resolves.toMatch(/probe\.lock$/);
     await expect(acquireProbeLock(dir)).rejects.toThrow(/already ran/);
+  });
+});
+
+describe("gate-a probe base URL override", () => {
+  it("refuses to start when PARALLEL_BASE_URL is set (the real key must only go to api.parallel.ai)", () => {
+    expect(() => assertNoBaseUrlOverride({ PARALLEL_BASE_URL: "https://evil.example.com" })).toThrow(/PARALLEL_BASE_URL/);
+    expect(() => assertNoBaseUrlOverride({ PARALLEL_BASE_URL: "" })).toThrow(/PARALLEL_BASE_URL/);
+  });
+  it("allows an environment without it", () => {
+    expect(() => assertNoBaseUrlOverride({})).not.toThrow();
   });
 });
