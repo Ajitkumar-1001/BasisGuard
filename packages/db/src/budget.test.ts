@@ -4,20 +4,12 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { reserveRunBudget, settleReservation } from "./budget";
 import type { DbHandle } from "./client";
 import { createRun } from "./runs";
-import { openTestDb } from "./test-helpers";
+import { openTestDb, rejectionMessages } from "./test-helpers";
 import { recordUsage, runSpend } from "./usage";
 
 let h: DbHandle;
 beforeEach(async () => { if (h) await h.close(); h = await openTestDb(); });
 afterAll(async () => { await h?.close(); });
-
-/** Drizzle wraps Postgres errors ("Failed query: ..."); the trigger message lives on err.cause. */
-async function rejectsWithCause(p: Promise<unknown>, re: RegExp): Promise<void> {
-  const err = await p.then(() => { throw new Error("expected rejection"); }, (e: unknown) => e);
-  const messages: string[] = [];
-  for (let e: unknown = err; e instanceof Error; e = e.cause) messages.push(e.message);
-  expect(messages.join("\n")).toMatch(re);
-}
 
 async function run(maxUsd = "5.00", maxCalls = 12) {
   const r = await createRun(h.db, CreateRunRequest.parse({ request_key: crypto.randomUUID(), company_name: "Example Corp", profile: "startup_facts_v1", policy: "baseline", max_estimated_usd: maxUsd, max_provider_calls: maxCalls }), new Date());
@@ -127,9 +119,9 @@ describe("usage ledger", () => {
     const id = await run();
     await recordUsage(h.db, { requestId: "r1", runId: id, operation: "task_create", vendor: "fixture:parallel", httpRequestCount: 1, costKind: "estimated", usd: "0.010", rateCardVersion: "parallel-2026-10-17", latencyMs: 5 });
     await recordUsage(h.db, { requestId: "r2", runId: id, operation: "task_status", vendor: "fixture:parallel", httpRequestCount: 1, costKind: "estimated", usd: "0", rateCardVersion: "parallel-2026-10-17", latencyMs: 1 });
-    await rejectsWithCause(recordUsage(h.db, { requestId: "r1", runId: id, operation: "x", vendor: "v", httpRequestCount: 1, costKind: "unknown", usd: "0", rateCardVersion: null, latencyMs: null }), /duplicate key/);
-    await rejectsWithCause(h.db.execute(sql`DELETE FROM usage_events`), /append-only/);
-    await rejectsWithCause(h.db.execute(sql`UPDATE usage_events SET usd_decimal = 0`), /append-only/);
+    expect(await rejectionMessages(recordUsage(h.db, { requestId: "r1", runId: id, operation: "x", vendor: "v", httpRequestCount: 1, costKind: "unknown", usd: "0", rateCardVersion: null, latencyMs: null }))).toMatch(/duplicate key/);
+    expect(await rejectionMessages(h.db.execute(sql`DELETE FROM usage_events`))).toMatch(/append-only/);
+    expect(await rejectionMessages(h.db.execute(sql`UPDATE usage_events SET usd_decimal = 0`))).toMatch(/append-only/);
     expect(await runSpend(h.db, id)).toEqual({ usd: "0.010000", httpRequests: 2, byCostKind: { reported: 0, estimated: 2, unknown: 0 } });
   });
 
