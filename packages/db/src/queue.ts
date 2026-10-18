@@ -23,16 +23,15 @@ export class LeaseLostError extends Error {
 
 const inMs = (ms: number) => sql`now() + (${ms} * interval '1 millisecond')`;
 
+type LeaseOptions = { workerId: string; leaseMs: number; jobTypes: readonly JobType[] };
+
 /**
- * Atomically lease the oldest ready job of the given types. Selection (FOR UPDATE SKIP LOCKED) and
- * the lease write are one statement, so concurrent workers never lease the same row. An expired
- * lease is re-leasable; re-leasing bumps lease_version, which fences the previous holder.
+ * INTERNAL (exported for plan-shape tests): the single lease UPDATE. The ready-row subquery is a
+ * scalar `= (subquery)`, which Postgres plans as an InitPlan evaluated exactly once. An `IN
+ * (subquery)` form becomes a semi-join whose LIMIT 1 FOR UPDATE SKIP LOCKED side can be rescanned
+ * per outer row and lease several jobs. Requires a non-empty `jobTypes`.
  */
-export async function leaseNextJob(
-  db: DbOrTx,
-  o: { workerId: string; leaseMs: number; jobTypes: readonly JobType[] },
-): Promise<LeasedJob | null> {
-  if (o.jobTypes.length === 0) return null;
+export function buildLeaseStatement(db: DbOrTx, o: LeaseOptions) {
   const ready = db
     .select({ id: jobQueue.id })
     .from(jobQueue)
@@ -47,7 +46,7 @@ export async function leaseNextJob(
     .limit(1)
     .for("update", { skipLocked: true });
 
-  const [row] = await db
+  return db
     .update(jobQueue)
     .set({
       status: "leased",
@@ -57,8 +56,20 @@ export async function leaseNextJob(
       attemptCount: sql`${jobQueue.attemptCount} + 1`,
       updatedAt: sql`now()`,
     })
-    .where(inArray(jobQueue.id, ready))
+    .where(eq(jobQueue.id, sql`(${ready})`))
     .returning();
+}
+
+/**
+ * Atomically lease the oldest ready job of the given types. Selection (FOR UPDATE SKIP LOCKED) and
+ * the lease write are one statement, so concurrent workers never lease the same row. An expired
+ * lease is re-leasable; re-leasing bumps lease_version, which fences the previous holder.
+ */
+export async function leaseNextJob(db: DbOrTx, o: LeaseOptions): Promise<LeasedJob | null> {
+  if (o.jobTypes.length === 0) return null;
+  const rows = await buildLeaseStatement(db, o);
+  if (rows.length > 1) throw new Error(`leaseNextJob leased ${rows.length} rows; expected at most 1`);
+  const [row] = rows;
   if (!row) return null;
   return {
     id: row.id,

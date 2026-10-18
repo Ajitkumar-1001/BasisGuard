@@ -1,8 +1,8 @@
 import { CreateRunRequest } from "@basisguard/contracts";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { DbHandle } from "./client";
-import { completeJob, expireLeasesForTest, failJob, heartbeatJob, LeaseLostError, leaseNextJob, retryJob } from "./queue";
+import { buildLeaseStatement, completeJob, expireLeasesForTest, failJob, heartbeatJob, LeaseLostError, leaseNextJob, retryJob } from "./queue";
 import { createRun } from "./runs";
 import { jobQueue } from "./schema";
 import { openTestDb } from "./test-helpers";
@@ -33,6 +33,21 @@ describe("job queue", () => {
     await seed(3);
     const leases = await Promise.all(Array.from({ length: 3 }, (_, i) => leaseNextJob(h.db, { workerId: `w${i}`, leaseMs: 30_000, jobTypes: types })));
     expect(new Set(leases.map((l) => l?.id)).size).toBe(3);
+  });
+
+  it("plans the lease subquery as a once-only InitPlan, not a rescannable semi-join", async () => {
+    const stmt = buildLeaseStatement(h.db, { workerId: "x", leaseMs: 30_000, jobTypes: types });
+    await h.db.transaction(async (tx) => {
+      // Push the planner toward a nested loop, the shape in which an IN-semi-join would rescan the
+      // LIMIT 1 FOR UPDATE SKIP LOCKED subquery and lease several rows.
+      await tx.execute(sql`SET LOCAL enable_hashjoin = off`);
+      await tx.execute(sql`SET LOCAL enable_mergejoin = off`);
+      await tx.execute(sql`SET LOCAL enable_material = off`);
+      const rows = await tx.execute<{ "QUERY PLAN": string }>(sql`EXPLAIN ${stmt.getSQL()}`);
+      const plan = rows.map((r) => r["QUERY PLAN"]).join("\n");
+      expect(plan).toMatch(/InitPlan/);
+      expect(plan).not.toMatch(/ANY_subquery|Semi Join/);
+    });
   });
 
   it("re-leases an expired lease and fences the old owner", async () => {
