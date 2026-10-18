@@ -1,6 +1,6 @@
 import "server-only";
 import { loadRuntimeConfig } from "@basisguard/core";
-import { createDb } from "@basisguard/db";
+import { createDb } from "@basisguard/db/runtime";
 import type { WebRuntime } from "./handlers";
 
 let runtime: Promise<WebRuntime> | undefined;

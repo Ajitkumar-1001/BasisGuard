@@ -39,7 +39,7 @@ export const StoredRunInput = z.object({ ...RunFields, as_of_date: IsoCalendarDa
 export type StoredRunInput = z.infer<typeof StoredRunInput>;
 
 export const ApiErrorCode = z.enum([
-  "invalid_request", "idempotency_conflict", "replay_read_only", "not_found", "policy_unavailable", "internal_error",
+  "invalid_request", "idempotency_conflict", "replay_read_only", "not_found", "policy_unavailable", "internal_error", "payload_too_large",
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCode>;
 export type ApiError = { code: ApiErrorCode; message: string; requestId: string; issues?: unknown };

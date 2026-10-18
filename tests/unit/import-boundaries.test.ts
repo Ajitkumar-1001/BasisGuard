@@ -28,4 +28,10 @@ describe("import boundaries", () => {
     expect(web.length).toBeGreaterThan(0); // guards against a vacuous scan if the web app path changes
     expect(web.filter((p) => importsOf(p, "@basisguard/providers") || importsOf(p, "parallel-web"))).toEqual([]);
   });
+
+  it("web non-test sources import @basisguard/db only via the runtime-only subpath", () => {
+    const web = files.filter((p) => p.startsWith("frontend/") && !p.endsWith(".test.ts"));
+    expect(web.filter((p) => importsOf(p, "@basisguard/db"))).toEqual([]);
+    expect(web.some((p) => importsOf(p, "@basisguard/db/runtime"))).toBe(true);
+  });
 });

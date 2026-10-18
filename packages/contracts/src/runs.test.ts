@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CreateRunRequest, StoredRunInput } from "./runs";
+import { ApiErrorCode, CreateRunRequest, StoredRunInput } from "./runs";
 
 const valid = {
   request_key: "6f2c1c9e-1d7e-4c47-9a3a-1b1b6f0a9f11",
@@ -68,5 +68,11 @@ describe("CreateRunRequest (FR-01)", () => {
     const { request_key: _k, ...rest } = CreateRunRequest.parse(valid);
     expect(StoredRunInput.safeParse(rest).success).toBe(false);
     expect(StoredRunInput.parse({ ...rest, as_of_date: "2026-10-17" }).as_of_date).toBe("2026-10-17");
+  });
+});
+
+describe("ApiErrorCode", () => {
+  it("includes payload_too_large for oversized request bodies (413)", () => {
+    expect(ApiErrorCode.parse("payload_too_large")).toBe("payload_too_large");
   });
 });

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { loadRuntimeConfig } from "@basisguard/core";
 import { type Db, type DbHandle, openTestDb, researchRuns } from "@basisguard/db";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleCreateRun, handleGetRun, handleGetRunEvents, handleListRuns, ListRunsQuery, type WebRuntime } from "./handlers";
 
 const RATE = fileURLToPath(new URL("../../../config/rate-cards/parallel-2026-10-17.json", import.meta.url));
@@ -148,6 +148,91 @@ describe("unexpected errors", () => {
       const text = await res.text();
       expect(JSON.parse(text)).toEqual({ code: "internal_error", message: "internal error", requestId: expect.any(String) });
       expect(text).not.toContain("hunter2");
+    }
+  });
+});
+
+describe("request body bound (64 KiB)", () => {
+  const LIMIT = 64 * 1024;
+
+  it("413 payload_too_large when content-length exceeds 64 KiB, without reading the body", async () => {
+    const req = new Request("http://127.0.0.1/api/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": String(LIMIT + 1) },
+      body: JSON.stringify(body({ pad: "x".repeat(LIMIT) })),
+    });
+    const r = await handleCreateRun(req, rt);
+    expect(r.status).toBe(413);
+    expect(await r.json()).toMatchObject({ code: "payload_too_large", requestId: expect.any(String) });
+    expect(req.bodyUsed).toBe(false);
+    expect(await h.db.select().from(researchRuns)).toHaveLength(0);
+  });
+
+  it("413 for a streamed body past 64 KiB with no content-length; stops pulling the stream", async () => {
+    let pulled = 0;
+    const chunk = new TextEncoder().encode("x".repeat(16 * 1024));
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) { pulled += chunk.byteLength; c.enqueue(chunk); }, // never ends: an unbounded reader would hang
+    });
+    const req = new Request("http://127.0.0.1/api/runs", { method: "POST", body: stream, duplex: "half" } as RequestInit);
+    const r = await handleCreateRun(req, rt);
+    expect(r.status).toBe(413);
+    expect(await r.json()).toMatchObject({ code: "payload_too_large" });
+    expect(pulled).toBeLessThan(LIMIT + 4 * chunk.byteLength);
+  });
+
+  it("a body just under the limit is still parsed normally", async () => {
+    const r = await handleCreateRun(post(body({ company_name: "Example Corp" })), rt);
+    expect(r.status).toBe(202);
+  });
+});
+
+describe("list resilience", () => {
+  it("a malformed stored input_json row does not 500 the list; companyName falls back to null", async () => {
+    const { runId } = await (await handleCreateRun(post(body()), rt)).json();
+    await h.db.insert(researchRuns).values({
+      requestKey: "00000000-0000-4000-8000-0000000000aa",
+      requestBodyHash: "corrupt",
+      inputJson: { not: "a stored run input" },
+      policyVersion: "baseline",
+      providerProcessor: "base",
+      maxProviderCalls: 1,
+      maxEstimatedUsd: "1.000000",
+      deadlineAt: new Date(Date.now() + 60_000),
+    });
+    const r = await handleListRuns(new URL("http://x/api/runs"), rt);
+    expect(r.status).toBe(200);
+    const { runs } = await r.json();
+    expect(runs).toHaveLength(2);
+    expect(runs.find((x: { id: string }) => x.id === runId).companyName).toBe("Example Corp");
+    expect(runs.find((x: { id: string }) => x.id !== runId).companyName).toBeNull();
+  });
+});
+
+describe("internal error logging", () => {
+  it("logs one structured line with only requestId/errorName/errorCode and reuses the response requestId", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const secret = "postgres://basisguard:hunter2@127.0.0.1:5432/basisguard_test";
+      const boom = () => { throw Object.assign(new Error(`connection failed: ${secret}`), { code: "ECONNREFUSED" }); };
+      // Deliberate test double: only the methods the handler reaches need to exist, and each throws.
+      const broken: WebRuntime = { db: { select: boom } as unknown as Db, config: rt.config };
+      const res = await handleListRuns(new URL("http://x/api/runs"), broken);
+      expect(res.status).toBe(500);
+      const dto = await res.json();
+      expect(dto).toEqual({ code: "internal_error", message: "internal error", requestId: expect.any(String) });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]).toHaveLength(1);
+      const line = spy.mock.calls[0][0] as string;
+      expect(typeof line).toBe("string");
+      expect(line).not.toContain("\n");
+      expect(line).not.toContain("hunter2");
+      const logged = JSON.parse(line);
+      expect(logged).toEqual({ requestId: dto.requestId, errorName: "Error", errorCode: "ECONNREFUSED" });
+      expect(logged).not.toHaveProperty("message");
+      expect(logged).not.toHaveProperty("stack");
+    } finally {
+      spy.mockRestore();
     }
   });
 });

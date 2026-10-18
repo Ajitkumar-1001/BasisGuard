@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { CreateRunRequest, RunStatus, StoredRunInput } from "@basisguard/contracts";
 import type { RuntimeConfig } from "@basisguard/core";
-import { createRun, type Db, getRun, listRunEvents, listRuns, providerArtifacts, runSpend } from "@basisguard/db";
+import { createRun, type Db, getRun, listRunEvents, listRuns, providerArtifacts, runSpend } from "@basisguard/db/runtime";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { apiError, withInternalErrors } from "./http";
@@ -23,17 +22,49 @@ export const ListRunsQuery = z
 /** Read-only shape probe of a stored task_result artifact; anything else reads as null content/basis. */
 const TaskResultShape = z.object({ output: z.object({ content: z.unknown(), basis: z.unknown() }).partial() });
 
+/** POST /api/runs body cap. Enforced on content-length and again while streaming (the header is not trusted). */
+export const MAX_BODY_BYTES = 64 * 1024;
+
+type BodyRead = { kind: "ok"; value: unknown } | { kind: "too_large" } | { kind: "invalid" };
+
+async function readBoundedJson(req: Request, limit: number): Promise<BodyRead> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null && Number(declared) > limit) return { kind: "too_large" };
+  if (!req.body) return { kind: "invalid" };
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => {});
+      return { kind: "too_large" };
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    bytes.set(c, offset);
+    offset += c.byteLength;
+  }
+  try {
+    return { kind: "ok", value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
+
 export async function handleCreateRun(req: Request, rt: WebRuntime): Promise<Response> {
-  return withInternalErrors(async () => {
-    const requestId = randomUUID();
+  return withInternalErrors(async (requestId) => {
     // Checked before the body is read: replay never parses or writes.
     if (rt.config.mode === "replay") return apiError(403, "replay_read_only", "replay mode is read-only", requestId);
-    let json: unknown;
-    try {
-      json = await req.json();
-    } catch {
-      return apiError(400, "invalid_request", "body must be JSON", requestId);
-    }
+    const body = await readBoundedJson(req, MAX_BODY_BYTES);
+    if (body.kind === "too_large") return apiError(413, "payload_too_large", `body exceeds ${MAX_BODY_BYTES} bytes`, requestId);
+    if (body.kind === "invalid") return apiError(400, "invalid_request", "body must be JSON", requestId);
+    const json = body.value;
     const parsed = CreateRunRequest.safeParse(json);
     if (!parsed.success) return apiError(400, "invalid_request", "request validation failed", requestId, parsed.error.issues);
     if (parsed.data.policy !== "baseline") {
@@ -49,8 +80,7 @@ export async function handleCreateRun(req: Request, rt: WebRuntime): Promise<Res
 }
 
 export async function handleListRuns(url: URL, rt: WebRuntime): Promise<Response> {
-  return withInternalErrors(async () => {
-    const requestId = randomUUID();
+  return withInternalErrors(async (requestId) => {
     const query = ListRunsQuery.safeParse({
       limit: url.searchParams.get("limit") ?? undefined,
       status: url.searchParams.get("status") ?? undefined,
@@ -63,7 +93,8 @@ export async function handleListRuns(url: URL, rt: WebRuntime): Promise<Response
         status: r.status,
         errorCode: r.errorCode,
         policy: r.policyVersion,
-        companyName: StoredRunInput.parse(r.inputJson).company_name,
+        // A legacy/malformed stored row must not fail the whole list.
+        companyName: StoredRunInput.safeParse(r.inputJson).data?.company_name ?? null,
         createdAt: r.createdAt.toISOString(),
       })),
     });
@@ -71,8 +102,7 @@ export async function handleListRuns(url: URL, rt: WebRuntime): Promise<Response
 }
 
 export async function handleGetRun(id: string, rt: WebRuntime): Promise<Response> {
-  return withInternalErrors(async () => {
-    const requestId = randomUUID();
+  return withInternalErrors(async (requestId) => {
     const run = Uuid.safeParse(id).success ? await getRun(rt.db, id) : undefined;
     if (!run) return apiError(404, "not_found", "run not found", requestId);
     const [artifact] = run.sourceTaskArtifactId
@@ -107,8 +137,7 @@ export async function handleGetRun(id: string, rt: WebRuntime): Promise<Response
 }
 
 export async function handleGetRunEvents(id: string, rt: WebRuntime): Promise<Response> {
-  return withInternalErrors(async () => {
-    const requestId = randomUUID();
+  return withInternalErrors(async (requestId) => {
     if (!Uuid.safeParse(id).success || !(await getRun(rt.db, id))) return apiError(404, "not_found", "run not found", requestId);
     const events = await listRunEvents(rt.db, id);
     return Response.json({
