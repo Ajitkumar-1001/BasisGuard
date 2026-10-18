@@ -8,8 +8,15 @@ const raw = () => JSON.parse(readFileSync(path, "utf8")) as Record<string, unkno
 describe("RateCard schema", () => {
   it("accepts the pinned 2026-10-17 card", () => {
     const card = RateCard.parse(raw());
-    expect(card.task_usd_per_run.base).toBe("0.010");
-    expect(card.search_usd_per_request.fast).toBe("0.001");
+    // Full tables (docs pricing 2026-10-17: per 1,000 successful runs / requests), so a tier typo fails here.
+    expect(card.task_usd_per_run).toEqual({
+      lite: "0.005", base: "0.010", core: "0.025", core2x: "0.050", pro: "0.100",
+      ultra: "0.300", ultra2x: "0.600", ultra4x: "1.200", ultra8x: "2.400",
+    });
+    expect(card.search_usd_per_request).toEqual({ turbo: "0.001", fast: "0.001", basic: "0.005", advanced: "0.005" });
+    expect(card.search_included_results).toBe(10);
+    expect(card.search_additional_result_usd).toBe("0.001");
+    expect(card.extract_usd_per_url).toBe("0.001");
   });
 
   it("rejects float prices and missing processors", () => {

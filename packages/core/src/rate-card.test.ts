@@ -24,4 +24,15 @@ describe("loadRateCard", () => {
     writeFileSync(bad, JSON.stringify({ version: "nope" }));
     expect(() => loadRateCard(bad)).toThrow(ConfigError);
   });
+
+  it("keeps the underlying read error as the ConfigError cause", () => {
+    let err: unknown;
+    try {
+      loadRateCard("/nonexistent/card.json");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ConfigError);
+    expect((err as Error).cause).toMatchObject({ code: "ENOENT" });
+  });
 });

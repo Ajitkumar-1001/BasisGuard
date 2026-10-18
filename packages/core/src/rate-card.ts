@@ -15,7 +15,7 @@ export function loadRateCard(path: string): LoadedRateCard {
     bytes = readFileSync(path);
     json = JSON.parse(bytes.toString("utf8"));
   } catch (e) {
-    throw new ConfigError(`rate card not readable as JSON at ${path}: ${(e as Error).message}`);
+    throw new ConfigError(`rate card not readable as JSON at ${path}: ${(e as Error).message}`, { cause: e });
   }
   const parsed = RateCard.safeParse(json);
   if (!parsed.success) throw new ConfigError(`rate card ${path} failed validation: ${parsed.error.message}`);
