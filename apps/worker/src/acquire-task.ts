@@ -1,7 +1,7 @@
 import { isTerminalRunStatus, type RateCard, type RunErrorCode, type RunStatus, StoredRunInput } from "@basisguard/contracts";
 import { TaskResultEnvelope } from "@basisguard/core";
 import {
-  appendRunEvent, budgetReservations, type Db, type DbOrTx, getRun, insertArtifact, type LeasedJob, recordUsage,
+  appendRunEvent, budgetReservations, type Db, type DbOrTx, getRun, insertArtifact, jobQueue, type LeasedJob, recordUsage,
   reserveRunBudget, type RunRow, settleReservation, transitionRun,
 } from "@basisguard/db/runtime";
 import { ProviderError, type ResearchProvider, type ResearchTaskInput } from "@basisguard/providers";
@@ -15,8 +15,18 @@ export type WorkerDeps = {
 };
 export type StepOutcome = { kind: "done" } | { kind: "retry"; delayMs: number; reason: string };
 
-/** Leases of one acquire_task job beyond this fail the run (attempt_count increments on every lease, uncapped in the queue). */
+/**
+ * Leases of one acquire_task job beyond this fail a still-`queued` run (attempt_count increments on every
+ * lease, uncapped in the queue). Not applied once `researching`: every healthy pending poll is a fresh
+ * lease, so a lease-count cap there would fail long-running upstream Tasks that are succeeding.
+ */
 export const MAX_ACQUIRE_ATTEMPTS = 20;
+/**
+ * While `researching`, polling is bounded by deadline_at; this caps consecutive steps that ended in a
+ * failed read (a healthy pending poll resets the count). The count is carried in job_queue.last_error.
+ */
+export const MAX_CONSECUTIVE_READ_FAILURES = 20;
+const READ_FAILURE_RE = /^read_failure (\d+): /;
 const MAX_DELAY_MS = 60_000;
 const DONE: StepOutcome = { kind: "done" };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -63,7 +73,7 @@ export async function processAcquireTask(deps: WorkerDeps, job: LeasedJob): Prom
     return failSubmissionUnknown(deps, run, "found submitting without provider_run_id after restart");
   }
   if (clock(deps) >= run.deadlineAt) return failRun(deps.db, run, run.status, "deadline_exceeded", {});
-  if (job.attemptCount > MAX_ACQUIRE_ATTEMPTS) {
+  if (run.status === "queued" && job.attemptCount > MAX_ACQUIRE_ATTEMPTS) {
     return failRun(deps.db, run, run.status, "max_attempts_exceeded", { attemptCount: job.attemptCount, max: MAX_ACQUIRE_ATTEMPTS });
   }
   switch (run.status) {
@@ -184,8 +194,8 @@ async function failSubmissionUnknown(deps: WorkerDeps, run: RunRow, why: string)
  * - provider_auth_error / provider_bad_request ⇒ fail the run with that code.
  * - everything else, including provider_unavailable with any `submitted` value and the adapter's
  *   HTTP 404/409 → provider_unavailable/unknown mapping ⇒ retry with backoff. Reads never create, so this
- *   never becomes submission_unknown; a permanently missing run ends in deadline_exceeded or
- *   max_attempts_exceeded on a later step instead of looping forever.
+ *   never becomes submission_unknown. The MAX_CONSECUTIVE_READ_FAILURES-th failed step in a row fails the
+ *   run with max_attempts_exceeded; otherwise a permanently missing run ends in deadline_exceeded.
  */
 async function readCall<T>(
   deps: WorkerDeps, run: RunRow, job: LeasedJob, operation: string, fn: () => Promise<T>,
@@ -204,10 +214,24 @@ async function readCall<T>(
     if (e instanceof ProviderError && (e.code === "provider_auth_error" || e.code === "provider_bad_request")) {
       return { ok: false, outcome: await failRun(deps.db, run, run.status, e.code, { operation, message: e.message }) };
     }
-    const delayMs = retryDelayMs(e instanceof ProviderError ? e.retryAfterMs : undefined, job.attemptCount);
     const why = e instanceof Error ? `${e.name}: ${e.message}` : "non-error thrown";
-    return { ok: false, outcome: bounded(deps, run, delayMs, `${operation}: ${why}`) };
+    const failures = (await priorReadFailures(deps.db, job)) + 1;
+    if (failures >= MAX_CONSECUTIVE_READ_FAILURES) {
+      return { ok: false, outcome: await failRun(deps.db, run, run.status, "max_attempts_exceeded", {
+        operation, message: why, consecutiveReadFailures: failures, max: MAX_CONSECUTIVE_READ_FAILURES,
+      }) };
+    }
+    const delayMs = retryDelayMs(e instanceof ProviderError ? e.retryAfterMs : undefined, job.attemptCount);
+    // The `read_failure N:` prefix is the counter; any other retry reason (healthy pending poll) resets it.
+    return { ok: false, outcome: bounded(deps, run, delayMs, `read_failure ${failures}: ${operation}: ${why}`) };
   }
+}
+
+/** Consecutive failed read steps before this lease, parsed from the reason the previous step stored. */
+async function priorReadFailures(db: DbOrTx, job: LeasedJob): Promise<number> {
+  const [row] = await db.select({ lastError: jobQueue.lastError }).from(jobQueue).where(eq(jobQueue.id, job.id));
+  const m = row?.lastError ? READ_FAILURE_RE.exec(row.lastError) : null;
+  return m ? Number(m[1]) : 0;
 }
 
 async function poll(deps: WorkerDeps, run: RunRow, job: LeasedJob): Promise<StepOutcome> {

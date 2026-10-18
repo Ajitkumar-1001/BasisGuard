@@ -8,7 +8,7 @@ import {
 import { FIXTURE_ORIGIN, FixtureResearchProvider, ProviderError, type ResearchProvider } from "@basisguard/providers";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { backoffMs, MAX_ACQUIRE_ATTEMPTS, processAcquireTask, retryDelayMs, type WorkerDeps } from "./acquire-task";
+import { backoffMs, MAX_ACQUIRE_ATTEMPTS, MAX_CONSECUTIVE_READ_FAILURES, processAcquireTask, retryDelayMs, type WorkerDeps } from "./acquire-task";
 import { drain, runOnce } from "./worker";
 
 const { card, sha256 } = loadRateCard(fileURLToPath(new URL("../../../config/rate-cards/parallel-2026-10-17.json", import.meta.url)));
@@ -278,6 +278,56 @@ describe("attempt cap", () => {
     expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "max_attempts_exceeded" });
     expect(provider.createCalls).toHaveLength(0);
     expect(await h.db.select().from(budgetReservations)).toHaveLength(0);
+  });
+
+  it("healthy pending polls are not counted: pending for MAX_ACQUIRE_ATTEMPTS + 5 steps, then completes", async () => {
+    const inner = new FixtureResearchProvider();
+    let statusCalls = 0;
+    const slow: ResearchProvider = {
+      createStructuredTask: (i) => inner.createStructuredTask(i),
+      getTaskStatus: async (id) => (statusCalls++ < MAX_ACQUIRE_ATTEMPTS + 5 ? { state: "pending", rawStatus: "running" } : inner.getTaskStatus(id)),
+      getTaskResult: (id) => inner.getTaskResult(id),
+    };
+    const runId = await newRun();
+    await drain(deps(slow), { ...W, maxIterations: 100 });
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "complete", errorCode: null });
+    expect(statusCalls).toBe(MAX_ACQUIRE_ATTEMPTS + 6);
+    expect(inner.createCalls).toHaveLength(1);
+  });
+
+  it("a healthy pending poll resets the consecutive read-failure count", async () => {
+    const inner = new FixtureResearchProvider();
+    let statusCalls = 0;
+    const flaky: ResearchProvider = {
+      createStructuredTask: (i) => inner.createStructuredTask(i),
+      // Alternate failure / pending for 2*MAX steps (MAX failures in total, never two in a row), then complete.
+      getTaskStatus: async (id) => {
+        const n = statusCalls++;
+        if (n >= 2 * MAX_CONSECUTIVE_READ_FAILURES) return inner.getTaskStatus(id);
+        if (n % 2 === 0) throw new ProviderError("provider_unavailable", "HTTP 503", "unknown");
+        return { state: "pending", rawStatus: "running" };
+      },
+      getTaskResult: (id) => inner.getTaskResult(id),
+    };
+    const runId = await newRun();
+    await drain(deps(flaky), { ...W, maxIterations: 100 });
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "complete", errorCode: null });
+    expect(inner.createCalls).toHaveLength(1);
+  });
+
+  it("MAX_CONSECUTIVE_READ_FAILURES failed reads in a row ⇒ max_attempts_exceeded", async () => {
+    const inner = new FixtureResearchProvider();
+    let statusCalls = 0;
+    const p: ResearchProvider = {
+      createStructuredTask: (i) => inner.createStructuredTask(i),
+      getTaskStatus: async () => { statusCalls++; throw new ProviderError("provider_unavailable", "HTTP 503", "unknown"); },
+      getTaskResult: async () => { throw new Error("unreachable"); },
+    };
+    const runId = await newRun();
+    await drain(deps(p), { ...W, maxIterations: 100 });
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "max_attempts_exceeded" });
+    expect(statusCalls).toBe(MAX_CONSECUTIVE_READ_FAILURES);
+    expect(inner.createCalls).toHaveLength(1);
   });
 
   it("FR-02 wins over the attempt cap: submitting without provider_run_id ⇒ submission_unknown", async () => {
