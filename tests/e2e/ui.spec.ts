@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 // page.evaluate callbacks touch document/window; the e2e tsconfig has no DOM lib.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 // Hard-coded: the e2e tsconfig has no `@/` alias, and the fixture modules import via it.
 // Source of truth: frontend/src/ui/fixtures/runs.ts (Northwind) and evaluations.ts (v3, v4-draft).
@@ -10,6 +10,13 @@ const EVAL_V4_DRAFT = "9a1d6b37-8c20-4e5f-b4d8-6f3a0c7e1925";
 
 const PREVIEW_TEXT = "NOT HUMAN-REVIEWED — DO NOT QUOTE";
 const FIXTURE_TEXT = "Seeded example · synthetic fixture data — not real Parallel output";
+
+/** Navigate, require HTTP 200, and wait for the page's h1 so assertions never run against an error/empty page. */
+async function open(page: Page, route: string): Promise<void> {
+  const res = await page.goto(route);
+  expect(res?.status(), `GET ${route}`).toBe(200);
+  await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+}
 
 const ROUTES = [
   "/",
@@ -30,8 +37,7 @@ for (const vp of VIEWPORTS) {
     test.use({ viewport: { width: vp.width, height: vp.height } });
     for (const route of ROUTES) {
       test(route, async ({ page }) => {
-        await page.goto(route);
-        await page.waitForLoadState("networkidle");
+        await open(page, route);
         const m = await page.evaluate(() => ({
           scrollWidth: document.documentElement.scrollWidth,
           innerWidth: window.innerWidth,
@@ -43,7 +49,7 @@ for (const vp of VIEWPORTS) {
 }
 
 test("body uses the vendored Poppins font, not the system fallback", async ({ page }) => {
-  await page.goto("/runs/new");
+  await open(page, "/runs/new");
   const family = await page.evaluate(async () => {
     await document.fonts.ready;
     return getComputedStyle(document.body).fontFamily;
@@ -61,7 +67,7 @@ test("body uses the vendored Poppins font, not the system fallback", async ({ pa
 
 test("demo walk: claims tab, drawer keyboard behaviour, tab arrows, repair history", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(`/examples/runs/${NORTHWIND}`);
+  await open(page, `/examples/runs/${NORTHWIND}`);
   await expect(page.getByText(FIXTURE_TEXT)).toBeVisible();
 
   const claimsTab = page.getByRole("tab", { name: "Claims & Evidence" });
@@ -84,6 +90,7 @@ test("demo walk: claims tab, drawer keyboard behaviour, tab arrows, repair histo
   await page.keyboard.press("ArrowRight");
   const judgeTab = page.getByRole("tab", { name: "Initial Judge" });
   await expect(judgeTab).toHaveAttribute("aria-selected", "true");
+  await expect(judgeTab).toBeFocused();
   await expect(claimsTab).toHaveAttribute("aria-selected", "false");
 
   await page.getByRole("tab", { name: "Automatic Repair History" }).click();
@@ -93,13 +100,13 @@ test("demo walk: claims tab, drawer keyboard behaviour, tab arrows, repair histo
 });
 
 test("v4-draft evaluation shows the preview and fixture banners", async ({ page }) => {
-  await page.goto(`/evaluations/${EVAL_V4_DRAFT}`);
+  await open(page, `/evaluations/${EVAL_V4_DRAFT}`);
   await expect(page.getByText(PREVIEW_TEXT, { exact: true })).toBeVisible();
   await expect(page.getByText(FIXTURE_TEXT)).toBeVisible();
 });
 
 test("v3 evaluation has the fixture banner and no preview banner", async ({ page }) => {
-  await page.goto(`/evaluations/${EVAL_V3}`);
+  await open(page, `/evaluations/${EVAL_V3}`);
   await expect(page.getByText(FIXTURE_TEXT)).toBeVisible();
   await expect(page.getByText(PREVIEW_TEXT)).toHaveCount(0);
 });
