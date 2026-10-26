@@ -29,6 +29,33 @@
   --font-mono: var(--font-jetbrains), ui-monospace, monospace;
 }
 
+/* Overrides the custom properties above when the OS theme is dark. Unlayered so it wins the
+   cascade over the @theme block regardless of layer order; no Tailwind variant involved. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: #17191C;
+    --color-panel: #202327;
+    --color-sunken: #0F1113;
+    --color-ink: #ECEAE5;
+    --color-ink-muted: #A7AAAD;
+    --color-line: #34373B;
+    --color-line-strong: #82868A;
+    --color-petrol: #8FD0E8;
+    --color-petrol-hover: #B3E1F1;
+    --color-petrol-tint: #16262B;
+    --color-moss: #8FD98B;
+    --color-moss-tint: #16211A;
+    --color-ochre: #E3B36B;
+    --color-ochre-tint: #2A2012;
+    --color-brick: #E8897C;
+    --color-brick-tint: #2A1816;
+    --color-plum: #D59FDD;
+    --color-plum-tint: #221825;
+    --color-slate: #BCBFC2;
+    --color-slate-tint: #212327;
+  }
+}
+
 @layer base {
   body {
     background: var(--color-canvas);

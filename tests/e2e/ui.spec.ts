@@ -9,7 +9,7 @@ const EVAL_V3 = "2c8e4f10-5d93-4b27-96a1-d07f3b8e5c42";
 const EVAL_V4_DRAFT = "9a1d6b37-8c20-4e5f-b4d8-6f3a0c7e1925";
 
 const PREVIEW_TEXT = "NOT HUMAN-REVIEWED — DO NOT QUOTE";
-const FIXTURE_TEXT = "Seeded example · synthetic fixture data — not real Parallel output";
+const FIXTURE_TEXT = "Seeded fixture · synthetic example — not real Parallel output";
 
 /** Navigate, require HTTP 200, and wait for the page's h1 so assertions never run against an error/empty page. */
 async function open(page: Page, route: string): Promise<void> {
@@ -30,6 +30,10 @@ const ROUTES = [
 const VIEWPORTS = [
   { name: "desktop", width: 1280, height: 800 },
   { name: "mobile", width: 390, height: 844 },
+  { name: "mobile-375", width: 375, height: 812 },
+  { name: "tablet-768", width: 768, height: 1024 },
+  { name: "laptop-1024", width: 1024, height: 768 },
+  { name: "wide-1440", width: 1440, height: 900 },
 ];
 
 for (const vp of VIEWPORTS) {

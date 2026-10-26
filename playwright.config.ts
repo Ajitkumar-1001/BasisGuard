@@ -33,7 +33,19 @@ export default defineConfig({
   workers: 1,
   globalSetup: "./tests/e2e/global-setup.ts",
   use: { baseURL: E2E_BASE_URL, trace: "retain-on-failure" },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      testIgnore: ["**/visual.spec.ts", "**/a11y.spec.ts"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    { name: "visual", testMatch: "**/visual.spec.ts", use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "a11y",
+      testMatch: "**/a11y.spec.ts",
+      use: { ...devices["Desktop Chrome"], reducedMotion: "reduce" },
+    },
+  ],
   webServer: {
     command: "pnpm exec next dev -H 127.0.0.1 -p 3100",
     cwd: `${root}frontend`,
