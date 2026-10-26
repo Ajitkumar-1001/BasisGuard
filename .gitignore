@@ -11,3 +11,4 @@ test-results/
 .DS_Store
 .agents/
 .claude/
+frontend/AGENTS.md
