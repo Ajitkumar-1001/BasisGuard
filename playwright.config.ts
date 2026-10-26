@@ -39,7 +39,23 @@ export default defineConfig({
       testIgnore: ["**/visual.spec.ts", "**/a11y.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
-    { name: "visual", testMatch: "**/visual.spec.ts", use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "visual",
+      testMatch: "**/visual.spec.ts",
+      use: { ...devices["Desktop Chrome"] },
+      // Default template has no per-test segment, so same-named screenshots for different
+      // theme/width combinations (same route, e.g. "runs.png") would collide on one baseline
+      // file; {testName} (describe + test title, e.g. "dark theme no-overflow-...-1440px")
+      // disambiguates them.
+      snapshotPathTemplate: "{snapshotDir}/{testFileDir}/{testFileName}-snapshots/{testName}/{arg}{-projectName}{ext}",
+      expect: {
+        toHaveScreenshot: {
+          animations: "disabled",
+          // Tolerates cross-run antialiasing/font-rendering noise, not real regressions.
+          maxDiffPixelRatio: 0.02,
+        },
+      },
+    },
     {
       name: "a11y",
       testMatch: "**/a11y.spec.ts",
