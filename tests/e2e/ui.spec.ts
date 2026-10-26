@@ -30,6 +30,10 @@ const ROUTES = [
 const VIEWPORTS = [
   { name: "desktop", width: 1280, height: 800 },
   { name: "mobile", width: 390, height: 844 },
+  { name: "mobile-375", width: 375, height: 812 },
+  { name: "tablet-768", width: 768, height: 1024 },
+  { name: "laptop-1024", width: 1024, height: 768 },
+  { name: "wide-1440", width: 1440, height: 900 },
 ];
 
 for (const vp of VIEWPORTS) {
