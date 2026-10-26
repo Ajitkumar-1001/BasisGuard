@@ -1,10 +1,10 @@
 // Phase 0 carve-out (PRD §0): the ONLY live call allowed outside the budgeted worker.
 // One human-authorized Task create, hard timeout, conservative cost warning, result recorded under .gate-a/.
 import { writeFile } from "node:fs/promises";
-import Parallel from "parallel-web";
 import { loadRateCard } from "@basisguard/core";
 import { buildTaskRunCreateRequest } from "@basisguard/providers";
-import { acquireProbeLock, parseProbeArgs } from "./gate-a-probe-lib";
+import { createParallelClient } from "@basisguard/providers/live/client";
+import { acquireProbeLock, assertNoBaseUrlOverride, parseProbeArgs } from "./gate-a-probe-lib";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -14,13 +14,20 @@ async function main(): Promise<number> {
     console.error("Refusing: this makes ONE paid Parallel Task create. Re-run with --authorize-paid-one-call.");
     return 2;
   }
+  try {
+    assertNoBaseUrlOverride(process.env);
+  } catch (e) {
+    console.error((e as Error).message);
+    return 2;
+  }
   const apiKey = process.env.PARALLEL_API_KEY;
   if (!apiKey) { console.error("PARALLEL_API_KEY is not set."); return 2; }
   const { card, sha256 } = loadRateCard(process.env.BASISGUARD_RATE_CARD ?? "config/rate-cards/parallel-2026-10-17.json");
   const price = card.task_usd_per_run[args.processor];
   console.warn(`PAID CALL: 1 Task run, processor=${args.processor}, conservative max USD ${price} (rate card ${card.version}, sha256 ${sha256.slice(0, 12)}). Billed only if the run completes.`);
 
-  const client = new Parallel({ apiKey, maxRetries: 0, timeout: 90_000 }); // D-005; HTTP timeout must exceed result({ timeout: 60 }) s
+  // Pinned baseURL + maxRetries 0 (D-005); HTTP timeout must exceed result({ timeout: 60 }) s.
+  const client = createParallelClient(apiKey, { timeoutMs: 90_000 });
   const request = buildTaskRunCreateRequest({
     companyName: args.companyName, officialDomain: args.officialDomain, profileVersion: "startup_facts_v1",
     asOfDate: args.asOfDate, processor: args.processor, requestKey: crypto.randomUUID(),

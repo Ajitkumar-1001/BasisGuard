@@ -1,0 +1,523 @@
+import { fileURLToPath } from "node:url";
+import { CreateRunRequest } from "@basisguard/contracts";
+import { loadRateCard, TaskResultEnvelope } from "@basisguard/core";
+import {
+  budgetReservations, createRun, type Db, type DbHandle, expireLeasesForTest, getRun, LeaseLostError, leaseNextJob, listRunEvents,
+  jobQueue, openTestDb, providerArtifacts, retryJob, usageEvents,
+} from "@basisguard/db";
+import { FIXTURE_ORIGIN, FixtureResearchProvider, ProviderError, type ResearchProvider } from "@basisguard/providers";
+import { eq } from "drizzle-orm";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { backoffMs, MAX_ACQUIRE_ATTEMPTS, MAX_CONSECUTIVE_READ_FAILURES, processAcquireTask, retryDelayMs, type StepOutcome, type WorkerDeps } from "./acquire-task";
+import { drain, runOnce } from "./worker";
+
+const { card, sha256 } = loadRateCard(fileURLToPath(new URL("../../config/rate-cards/parallel-2026-10-17.json", import.meta.url)));
+let h: DbHandle;
+beforeEach(async () => { if (h) await h.close(); h = await openTestDb(); });
+afterAll(async () => { await h?.close(); });
+
+const deps = (provider: ResearchProvider = new FixtureResearchProvider(), over: Partial<WorkerDeps> = {}): WorkerDeps => ({
+  db: h.db, provider, rateCard: card, rateCardSha256: sha256, vendor: "fixture:parallel", fixtureOrigin: FIXTURE_ORIGIN, pollDelayMs: 0, ...over,
+});
+const W = { workerId: "w1", leaseMs: 30_000 };
+async function newRun(over: Record<string, unknown> = {}) {
+  const r = await createRun(h.db, CreateRunRequest.parse({ request_key: crypto.randomUUID(), company_name: "Example Corp", profile: "startup_facts_v1", policy: "baseline", ...over }), new Date());
+  return r.runId;
+}
+const lease = async () => (await leaseNextJob(h.db, { workerId: "crashy", leaseMs: 30_000, jobTypes: ["acquire_task"] }))!;
+const CRASH = new Error("simulated process crash");
+
+describe("acquire_task happy path", () => {
+  it("submits once, polls, stores the untouched result and completes a baseline run", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    await drain(deps(provider), W);
+    const run = await getRun(h.db, runId);
+    expect(run).toMatchObject({ status: "complete", errorCode: null, rateCardSha256: sha256 });
+    expect(run?.providerRunId).toMatch(/^fx_ok_/);
+    expect(provider.createCalls).toHaveLength(1);
+    const [art] = await h.db.select().from(providerArtifacts).where(eq(providerArtifacts.id, run!.sourceTaskArtifactId!));
+    expect(art).toMatchObject({ kind: "task_result", fixtureOrigin: FIXTURE_ORIGIN });
+    expect((art!.rawJson as { output: { basis: unknown[] } }).output.basis).toHaveLength(7);
+    const usage = await h.db.select().from(usageEvents).where(eq(usageEvents.runId, runId));
+    expect(usage.map((u) => u.operation).sort()).toEqual(["task_create", "task_result", "task_status"]);
+    expect(usage.every((u) => u.rateCardVersion === card.version)).toBe(true);
+    const [res] = await h.db.select().from(budgetReservations);
+    expect(res).toMatchObject({ status: "reconciled", reservedUsd: "0.010000" });
+    expect((await listRunEvents(h.db, runId)).map((e) => e.eventType)).toEqual(
+      ["run_created", "task_submitting", "task_submitted", "task_completed"],
+    );
+  });
+
+  it("a completed run exposes its task artifact through the GET /api/runs/:id read path (db helpers)", async () => {
+    const runId = await newRun();
+    await drain(deps(), W);
+    const run = await getRun(h.db, runId);
+    expect(run?.status).toBe("complete");
+    expect(run?.sourceTaskArtifactId).toBeTruthy();
+    // Same lookup handleGetRun performs for `taskArtifact`.
+    const [artifact] = await h.db.select().from(providerArtifacts).where(eq(providerArtifacts.id, run!.sourceTaskArtifactId!));
+    expect(artifact).toBeDefined();
+    expect(artifact).toMatchObject({ kind: "task_result", ownerRunId: runId, fixtureOrigin: FIXTURE_ORIGIN });
+    expect(TaskResultEnvelope.safeParse(artifact!.rawJson).success).toBe(true);
+  });
+
+  it("an upper-case request_key still completes against the fixture provider (lower-case UUID passed)", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun({ request_key: crypto.randomUUID().toUpperCase() });
+    await drain(deps(provider), W);
+    expect((await getRun(h.db, runId))?.status).toBe("complete");
+    expect(provider.createCalls[0]!.requestKey).toMatch(/^[0-9a-f-]{36}$/);
+  });
+});
+
+describe("crash windows (FR-02)", () => {
+  it("crash after 'submitting' committed, before create ⇒ submission_unknown and zero creates", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    await expect(processAcquireTask(deps(provider, { hooks: { afterSubmittingCommitted: async () => { throw CRASH; } } }), await lease())).rejects.toBe(CRASH);
+    await expireLeasesForTest(h.db);
+    await drain(deps(provider), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "submission_unknown" });
+    expect(provider.createCalls).toHaveLength(0);
+    const [res] = await h.db.select().from(budgetReservations);
+    expect(res?.status).toBe("reconciled"); // counted as spent, fail closed
+    expect(await h.db.select().from(usageEvents)).toHaveLength(0); // no call was executed
+  });
+
+  it("crash after create returned, before persisting the id ⇒ submission_unknown, never re-created", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    await expect(processAcquireTask(deps(provider, { hooks: { afterProviderCreate: async () => { throw CRASH; } } }), await lease())).rejects.toBe(CRASH);
+    await expireLeasesForTest(h.db);
+    await drain(deps(provider), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "submission_unknown" });
+    expect(provider.createCalls).toHaveLength(1);
+  });
+
+  it("crash while researching with a persisted provider id ⇒ a fresh worker resumes polling and completes", async () => {
+    let pending = true;
+    const first = new FixtureResearchProvider();
+    const slow: ResearchProvider = {
+      createStructuredTask: (i) => first.createStructuredTask(i),
+      getTaskStatus: async (id) => (pending ? { state: "pending", rawStatus: "running" } : first.getTaskStatus(id)),
+      getTaskResult: (id) => first.getTaskResult(id),
+    };
+    const runId = await newRun();
+    await runOnce(deps(slow), W); // submit
+    await runOnce(deps(slow), W); // poll -> pending
+    expect((await getRun(h.db, runId))?.status).toBe("researching");
+    pending = false;
+    const restarted = new FixtureResearchProvider(); // new process, new provider instance
+    await drain(deps(restarted), { workerId: "w2", leaseMs: 30_000 });
+    expect((await getRun(h.db, runId))?.status).toBe("complete");
+    expect(first.createCalls).toHaveLength(1);
+    expect(restarted.createCalls).toHaveLength(0);
+  });
+
+  it("a zombie worker's late create result never resurrects a failed run (D-011)", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const zombieJob = await lease();
+    await processAcquireTask(deps(provider, {
+      hooks: {
+        afterSubmittingCommitted: async () => {
+          await expireLeasesForTest(h.db);
+          await drain(deps(new FixtureResearchProvider()), { workerId: "w2", leaseMs: 30_000 }); // marks submission_unknown
+        },
+      },
+    }), zombieJob);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "submission_unknown", providerRunId: null });
+    expect((await listRunEvents(h.db, runId)).map((e) => e.eventType)).toContain("orphaned_provider_run");
+    expect((await h.db.select().from(usageEvents).where(eq(usageEvents.runId, runId))).some((u) => u.operation === "task_create")).toBe(true);
+  });
+});
+
+describe("failure handling", () => {
+  it("definitive create rejection ⇒ failed with code, reservation released, request still ledgered", async () => {
+    const runId = await newRun({ company_name: "Fixture Auth Error" });
+    await drain(deps(), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "provider_auth_error" });
+    const [res] = await h.db.select().from(budgetReservations);
+    expect(res?.status).toBe("released");
+    const [u] = await h.db.select().from(usageEvents);
+    expect(u).toMatchObject({ operation: "task_create", usdDecimal: "0.000000" });
+  });
+
+  it("ambiguous create failure ⇒ submission_unknown, no retry, spend counted as unknown", async () => {
+    let creates = 0;
+    const flaky: ResearchProvider = {
+      createStructuredTask: async () => { creates++; throw new ProviderError("provider_unavailable", "socket hang up", "unknown"); },
+      getTaskStatus: async () => { throw new Error("unreachable"); },
+      getTaskResult: async () => { throw new Error("unreachable"); },
+    };
+    const runId = await newRun();
+    await drain(deps(flaky), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "submission_unknown" });
+    expect(creates).toBe(1);
+    const [u] = await h.db.select().from(usageEvents);
+    expect(u).toMatchObject({ costKind: "unknown", usdDecimal: "0.010000" });
+    await drain(deps(flaky), W); // re-drain never re-creates
+    expect(creates).toBe(1);
+  });
+
+  it("429 on create ⇒ back to queued, retried, then completes", async () => {
+    const inner = new FixtureResearchProvider();
+    let first = true;
+    const limited: ResearchProvider = {
+      createStructuredTask: async (i) => { if (first) { first = false; throw new ProviderError("provider_rate_limited", "429", "no", 1); } return inner.createStructuredTask(i); },
+      getTaskStatus: (id) => inner.getTaskStatus(id),
+      getTaskResult: (id) => inner.getTaskResult(id),
+    };
+    const runId = await newRun();
+    await drain(deps(limited), W);
+    expect((await getRun(h.db, runId))?.status).toBe("complete");
+    expect((await h.db.select().from(budgetReservations)).map((r) => r.status).sort()).toEqual(["reconciled", "released"]);
+  });
+
+  it("upstream task failure ⇒ provider_task_failed", async () => {
+    const runId = await newRun({ company_name: "Fixture Task Failure" });
+    await drain(deps(), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "provider_task_failed" });
+  });
+
+  it("malformed result ⇒ normalization_failed with the raw artifact preserved", async () => {
+    const runId = await newRun({ company_name: "Fixture Bad Result" });
+    await drain(deps(), W);
+    const run = await getRun(h.db, runId);
+    expect(run).toMatchObject({ status: "failed", errorCode: "normalization_failed" });
+    expect(run?.sourceTaskArtifactId).toBeTruthy();
+  });
+
+  it("budget too small for the processor price ⇒ budget_exhausted before any create", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun({ max_estimated_usd: "0.000001" });
+    await drain(deps(provider), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "budget_exhausted" });
+    expect(provider.createCalls).toHaveLength(0);
+    expect(await h.db.select().from(usageEvents)).toHaveLength(0);
+  });
+
+  it("deadline already passed ⇒ deadline_exceeded before any create", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    await drain(deps(provider, { now: () => new Date(Date.now() + 3 * 3_600_000) }), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "deadline_exceeded" });
+    expect(provider.createCalls).toHaveLength(0);
+  });
+
+  it("terminal runs are never re-entered", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    await drain(deps(provider), W);
+    await drain(deps(provider), W);
+    expect(provider.createCalls).toHaveLength(1);
+    expect((await getRun(h.db, runId))?.status).toBe("complete");
+  });
+});
+
+describe("phase-dependent provider_unavailable policy (Task 12 ruling)", () => {
+  it("poll-phase provider_unavailable/unknown ⇒ retry, then completes on a later step without re-creating", async () => {
+    const inner = new FixtureResearchProvider();
+    let statusCalls = 0;
+    const blip: ResearchProvider = {
+      createStructuredTask: (i) => inner.createStructuredTask(i),
+      getTaskStatus: async (id) => {
+        if (statusCalls++ === 0) throw new ProviderError("provider_unavailable", "connection timeout", "unknown");
+        return inner.getTaskStatus(id);
+      },
+      getTaskResult: (id) => inner.getTaskResult(id),
+    };
+    const runId = await newRun();
+    await runOnce(deps(blip), W); // submit
+    await runOnce(deps(blip), W); // poll -> provider_unavailable -> retry
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "researching", errorCode: null });
+    await drain(deps(blip), W);
+    expect((await getRun(h.db, runId))?.status).toBe("complete");
+    expect(inner.createCalls).toHaveLength(1);
+  });
+
+  for (const status of [404, 409]) {
+    it(`create-phase ${status} (mapped provider_unavailable/unknown) ⇒ submission_unknown, never re-created`, async () => {
+      let creates = 0;
+      const p: ResearchProvider = {
+        createStructuredTask: async () => { creates++; throw new ProviderError("provider_unavailable", `HTTP ${status}`, "unknown"); },
+        getTaskStatus: async () => { throw new Error("unreachable"); },
+        getTaskResult: async () => { throw new Error("unreachable"); },
+      };
+      const runId = await newRun();
+      await drain(deps(p), W);
+      await drain(deps(p), W);
+      expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "submission_unknown" });
+      expect(creates).toBe(1);
+    });
+
+    it(`poll-phase ${status} forever ⇒ bounded retry ending in max_attempts_exceeded, never re-created`, async () => {
+      const inner = new FixtureResearchProvider();
+      const p: ResearchProvider = {
+        createStructuredTask: (i) => inner.createStructuredTask(i),
+        getTaskStatus: async () => { throw new ProviderError("provider_unavailable", `HTTP ${status}`, "unknown"); },
+        getTaskResult: async () => { throw new Error("unreachable"); },
+      };
+      const runId = await newRun();
+      await drain(deps(p), W);
+      const run = await getRun(h.db, runId);
+      expect(run).toMatchObject({ status: "failed", errorCode: "max_attempts_exceeded" });
+      expect(run?.providerRunId).toBeTruthy();
+      expect(inner.createCalls).toHaveLength(1);
+    });
+  }
+});
+
+describe("attempt cap", () => {
+  it("a queued run past MAX_ACQUIRE_ATTEMPTS fails max_attempts_exceeded without any create", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const job = await lease();
+    expect(await processAcquireTask(deps(provider), { ...job, attemptCount: MAX_ACQUIRE_ATTEMPTS + 1 })).toEqual({ kind: "done" });
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "max_attempts_exceeded" });
+    expect(provider.createCalls).toHaveLength(0);
+    expect(await h.db.select().from(budgetReservations)).toHaveLength(0);
+  });
+
+  it("healthy pending polls are not counted: pending for MAX_ACQUIRE_ATTEMPTS + 5 steps, then completes", async () => {
+    const inner = new FixtureResearchProvider();
+    let statusCalls = 0;
+    const slow: ResearchProvider = {
+      createStructuredTask: (i) => inner.createStructuredTask(i),
+      getTaskStatus: async (id) => (statusCalls++ < MAX_ACQUIRE_ATTEMPTS + 5 ? { state: "pending", rawStatus: "running" } : inner.getTaskStatus(id)),
+      getTaskResult: (id) => inner.getTaskResult(id),
+    };
+    const runId = await newRun();
+    await drain(deps(slow), { ...W, maxIterations: 100 });
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "complete", errorCode: null });
+    expect(statusCalls).toBe(MAX_ACQUIRE_ATTEMPTS + 6);
+    expect(inner.createCalls).toHaveLength(1);
+  });
+
+  it("a healthy pending poll resets the consecutive read-failure count", async () => {
+    const inner = new FixtureResearchProvider();
+    let statusCalls = 0;
+    const flaky: ResearchProvider = {
+      createStructuredTask: (i) => inner.createStructuredTask(i),
+      // Alternate failure / pending for 2*MAX steps (MAX failures in total, never two in a row), then complete.
+      getTaskStatus: async (id) => {
+        const n = statusCalls++;
+        if (n >= 2 * MAX_CONSECUTIVE_READ_FAILURES) return inner.getTaskStatus(id);
+        if (n % 2 === 0) throw new ProviderError("provider_unavailable", "HTTP 503", "unknown");
+        return { state: "pending", rawStatus: "running" };
+      },
+      getTaskResult: (id) => inner.getTaskResult(id),
+    };
+    const runId = await newRun();
+    await drain(deps(flaky), { ...W, maxIterations: 100 });
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "complete", errorCode: null });
+    expect(inner.createCalls).toHaveLength(1);
+  });
+
+  it("MAX_CONSECUTIVE_READ_FAILURES failed reads in a row ⇒ max_attempts_exceeded", async () => {
+    const inner = new FixtureResearchProvider();
+    let statusCalls = 0;
+    const p: ResearchProvider = {
+      createStructuredTask: (i) => inner.createStructuredTask(i),
+      getTaskStatus: async () => { statusCalls++; throw new ProviderError("provider_unavailable", "HTTP 503", "unknown"); },
+      getTaskResult: async () => { throw new Error("unreachable"); },
+    };
+    const runId = await newRun();
+    await drain(deps(p), { ...W, maxIterations: 100 });
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "max_attempts_exceeded" });
+    expect(statusCalls).toBe(MAX_CONSECUTIVE_READ_FAILURES);
+    expect(inner.createCalls).toHaveLength(1);
+  });
+
+  it("FR-02 wins over the attempt cap: submitting without provider_run_id ⇒ submission_unknown", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    await expect(processAcquireTask(deps(provider, { hooks: { afterSubmittingCommitted: async () => { throw CRASH; } } }), await lease())).rejects.toBe(CRASH);
+    await expireLeasesForTest(h.db);
+    const job = await lease();
+    await processAcquireTask(deps(provider), { ...job, attemptCount: MAX_ACQUIRE_ATTEMPTS + 5 });
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "submission_unknown" });
+  });
+});
+
+describe("retry delays", () => {
+  it("backoffMs grows exponentially, caps at 60s, adds < 250ms jitter", () => {
+    for (const [attempt, base] of [[0, 1000], [1, 2000], [3, 8000], [6, 60_000], [20, 60_000]] as const) {
+      const d = backoffMs(attempt);
+      expect(d).toBeGreaterThanOrEqual(Math.min(base, 60_000));
+      expect(d).toBeLessThan(Math.min(base, 60_000) + 250);
+    }
+  });
+
+  it("retryAfterMs is clamped to [0, 60s]; NaN, non-finite and negative fall back to backoff", () => {
+    expect(retryDelayMs(1500, 0)).toBe(1500);
+    expect(retryDelayMs(0, 0)).toBe(0);
+    expect(retryDelayMs(100_000, 0)).toBe(60_000);
+    for (const bad of [Number.NaN, -1, Number.POSITIVE_INFINITY, undefined]) {
+      const d = retryDelayMs(bad, 2);
+      expect(d).toBeGreaterThanOrEqual(4000);
+      expect(d).toBeLessThan(4250);
+    }
+  });
+});
+
+/**
+ * Stale-lease races (adversarial panel). Worker A holds an expired lease and keeps acting; worker B holds
+ * the live lease and decides from a snapshot. `gatedDb` runs `before` (A's late progress) right before
+ * B's first transaction, so A's commits land between B's getRun and B's CAS. No real sleeps.
+ */
+describe("stale-lease races: a lost CAS on a non-terminal run never finishes the job", () => {
+  function gatedDb(before: () => Promise<void>): Db {
+    let fired = false;
+    return new Proxy(h.db, {
+      get(target, key) {
+        if (key === "transaction") {
+          return async (...args: Parameters<Db["transaction"]>) => {
+            if (!fired) { fired = true; await before(); }
+            return target.transaction(...args);
+          };
+        }
+        const v: unknown = Reflect.get(target, key, target);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+  }
+  const leaseAs = async (workerId: string) => (await leaseNextJob(h.db, { workerId, leaseMs: 30_000, jobTypes: ["acquire_task"] }))!;
+
+  for (const mode of ["created", "rate_limited"] as const) {
+    it(`B's submission_unknown CAS loses to A's late create (${mode}) ⇒ B retries, the run converges, one create`, async () => {
+      const inner = new FixtureResearchProvider();
+      const pA: ResearchProvider = {
+        createStructuredTask: async (i) => {
+          if (mode === "rate_limited") throw new ProviderError("provider_rate_limited", "429", "no", 1);
+          return inner.createStructuredTask(i);
+        },
+        getTaskStatus: (id) => inner.getTaskStatus(id), getTaskResult: (id) => inner.getTaskResult(id),
+      };
+      const runId = await newRun();
+      const jobA = await leaseAs("A");
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      let reached!: () => void;
+      const atSubmitting = new Promise<void>((r) => { reached = r; });
+      const aDone = processAcquireTask(deps(pA, { hooks: { afterSubmittingCommitted: async () => { reached(); await gate; } } }), jobA);
+      await atSubmitting; // A committed queued->submitting and stalls past its lease
+      await expireLeasesForTest(h.db);
+      const jobB = await leaseAs("B");
+      const outB = await processAcquireTask(deps(inner, { db: gatedDb(async () => { release(); await aDone; }) }), jobB);
+      const outA: StepOutcome = await aDone;
+      expect(outA.kind).toBe("retry");
+      expect((await getRun(h.db, runId))?.status).toBe(mode === "created" ? "researching" : "queued");
+      expect(outB).toMatchObject({ kind: "retry", delayMs: 0 });
+      await retryJob(h.db, jobB, 0, outB.kind === "retry" ? outB.reason : "");
+      await expect(retryJob(h.db, jobA, 0, "late")).rejects.toBeInstanceOf(LeaseLostError);
+      await drain(deps(inner), W);
+      expect(await getRun(h.db, runId)).toMatchObject({ status: "complete", errorCode: null });
+      expect(inner.createCalls).toHaveLength(1);
+    });
+  }
+
+  it("B's queued->submitting CAS loses to stale A's full submit ⇒ B retries (no reservation kept), the run is polled to complete", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const jobA = await leaseAs("A");
+    await expireLeasesForTest(h.db);
+    const jobB = await leaseAs("B");
+    let outA: StepOutcome | undefined;
+    const outB = await processAcquireTask(deps(provider, { db: gatedDb(async () => { outA = await processAcquireTask(deps(provider), jobA); }) }), jobB);
+    expect(outA).toEqual({ kind: "retry", delayMs: 0, reason: "poll" });
+    expect(outB).toMatchObject({ kind: "retry", delayMs: 0 });
+    expect(await h.db.select().from(budgetReservations)).toHaveLength(1); // B's reservation rolled back
+    await retryJob(h.db, jobB, 0, "lost race");
+    await expect(retryJob(h.db, jobA, 0, "poll")).rejects.toBeInstanceOf(LeaseLostError);
+    await drain(deps(provider), W);
+    expect((await getRun(h.db, runId))?.status).toBe("complete");
+    expect(provider.createCalls).toHaveLength(1);
+  });
+
+  it("B's budget_exhausted CAS loses to stale A's full submit (max_provider_calls=1) ⇒ B retries, the run completes", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun({ max_provider_calls: 1 });
+    const jobA = await leaseAs("A");
+    await expireLeasesForTest(h.db);
+    const jobB = await leaseAs("B");
+    const outB = await processAcquireTask(deps(provider, { db: gatedDb(async () => { await processAcquireTask(deps(provider), jobA); }) }), jobB);
+    expect(outB).toMatchObject({ kind: "retry", delayMs: 0 });
+    await retryJob(h.db, jobB, 0, "lost race");
+    await drain(deps(provider), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "complete", errorCode: null });
+    expect(provider.createCalls).toHaveLength(1);
+  });
+
+  it("B's deadline fail CAS loses to stale A's submit ⇒ B retries and the next step fails the researching run deadline_exceeded", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const jobA = await leaseAs("A");
+    await expireLeasesForTest(h.db);
+    const jobB = await leaseAs("B");
+    const late = () => new Date(Date.now() + 365 * 24 * 3600 * 1000);
+    const outB = await processAcquireTask(deps(provider, { now: late, db: gatedDb(async () => { await processAcquireTask(deps(provider), jobA); }) }), jobB);
+    expect((await getRun(h.db, runId))?.status).toBe("researching");
+    expect(outB).toMatchObject({ kind: "retry", delayMs: 0 });
+    await retryJob(h.db, jobB, 0, "lost race");
+    await drain(deps(provider, { now: late }), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "deadline_exceeded" });
+    expect(provider.createCalls).toHaveLength(1);
+  });
+});
+
+describe("lease loss aborts the step (heartbeat false ⇒ no further billable work)", () => {
+  it("an already-aborted lease signal throws LeaseLostError before any reservation or create", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const ac = new AbortController();
+    ac.abort();
+    await expect(processAcquireTask(deps(provider), await lease(), ac.signal)).rejects.toBeInstanceOf(LeaseLostError);
+    expect(provider.createCalls).toHaveLength(0);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "queued" });
+    expect(await h.db.select().from(budgetReservations)).toHaveLength(0);
+  });
+
+  it("a lease lost after 'submitting' committed stops before the create; the next holder fails closed with zero creates", async () => {
+    const provider = new FixtureResearchProvider();
+    const runId = await newRun();
+    const ac = new AbortController();
+    const hooks = { afterSubmittingCommitted: async () => { ac.abort(); } };
+    await expect(processAcquireTask(deps(provider, { hooks }), await lease(), ac.signal)).rejects.toBeInstanceOf(LeaseLostError);
+    expect(provider.createCalls).toHaveLength(0);
+    await expireLeasesForTest(h.db);
+    await drain(deps(provider), W);
+    expect(await getRun(h.db, runId)).toMatchObject({ status: "failed", errorCode: "submission_unknown" });
+    expect(provider.createCalls).toHaveLength(0);
+  });
+
+  it("runOnce: a heartbeat that finds the lease stolen aborts the in-flight step before the create", async () => {
+    const provider = new FixtureResearchProvider();
+    await newRun();
+    const hooks = {
+      afterSubmittingCommitted: async () => {
+        await expireLeasesForTest(h.db);
+        await leaseNextJob(h.db, { workerId: "thief", leaseMs: 30_000, jobTypes: ["acquire_task"] });
+        await new Promise((r) => setTimeout(r, 2_600)); // heartbeats at ~1 s and ~2 s report the lease lost
+      },
+    };
+    expect(await runOnce(deps(provider, { hooks }), { workerId: "w1", leaseMs: 3_000 })).toBe(true);
+    expect(provider.createCalls).toHaveLength(0);
+  });
+});
+
+describe("unexpected step errors", () => {
+  it("the retry delay after an unexpected error never sleeps past the run deadline", async () => {
+    const runId = await newRun();
+    const run = (await getRun(h.db, runId))!;
+    // The worker's clock reads 500 ms before the deadline; unclamped, backoffMs(1) would be >= 2 s.
+    const now = () => new Date(run.deadlineAt.getTime() - 500);
+    const hooks = { afterSubmittingCommitted: async () => { throw new Error("unexpected"); } };
+    const before = Date.now();
+    expect(await runOnce(deps(new FixtureResearchProvider(), { hooks, now }), W)).toBe(true);
+    const [job] = await h.db.select().from(jobQueue).where(eq(jobQueue.runId, runId));
+    expect(job).toMatchObject({ status: "retry_wait", lastError: "Error: unexpected" });
+    expect(job!.availableAt.getTime() - before).toBeLessThan(1_500);
+  });
+});

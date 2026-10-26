@@ -1,0 +1,19 @@
+{
+  "name": "@basisguard/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  },
+  "dependencies": {
+    "@basisguard/contracts": "workspace:*",
+    "@basisguard/core": "workspace:*",
+    "@basisguard/db": "workspace:*",
+    "@basisguard/providers": "workspace:*",
+    "drizzle-orm": "^0.45.4"
+  }
+}

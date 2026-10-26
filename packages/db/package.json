@@ -1,0 +1,25 @@
+{
+  "name": "@basisguard/db",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./runtime": "./runtime.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "generate": "drizzle-kit generate",
+    "migrate": "tsx bin/migrate.ts",
+    "reset-test": "tsx bin/reset-test.ts"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15"
+  },
+  "dependencies": {
+    "@basisguard/contracts": "workspace:*",
+    "@basisguard/core": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "^3.4.9"
+  }
+}
