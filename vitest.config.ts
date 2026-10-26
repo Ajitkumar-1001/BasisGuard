@@ -10,6 +10,7 @@ export default defineConfig({
       "packages/*/**/*.test.ts",
       "apps/worker/**/*.test.ts",
       "frontend/src/server/**/*.test.ts",
+      "frontend/src/ui/**/*.test.ts",
       "scripts/**/*.test.ts",
     ],
     setupFiles: ["tests/setup/network-deny.mjs"],

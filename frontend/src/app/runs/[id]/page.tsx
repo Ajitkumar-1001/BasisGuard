@@ -4,7 +4,7 @@ import { RunView } from "./run-view";
 // The page itself never awaits params; the dynamic part streams behind the Suspense fallback (cacheComponents).
 export default function RunPage(props: PageProps<"/runs/[id]">) {
   return (
-    <Suspense fallback={<p>Loading run…</p>}>
+    <Suspense fallback={<p className="text-sm text-ink-muted">Loading run…</p>}>
       <RunLoader params={props.params} />
     </Suspense>
   );

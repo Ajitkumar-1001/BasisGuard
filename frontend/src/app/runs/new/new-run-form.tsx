@@ -2,6 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { Callout } from "@/ui/banners";
+import { Button } from "@/ui/button";
+
+const INPUT = "mt-1 block min-h-11 w-full rounded-md border border-line-strong bg-panel px-3 py-1.5 text-sm text-ink sm:min-h-9";
 
 export function NewRunForm() {
   const router = useRouter();
@@ -10,12 +14,12 @@ export function NewRunForm() {
   const requestKey = useRef<string | null>(null);
   // The date defaults to today (UTC) on the client only (a server prerender would bake in a stale date). The input
   // stays uncontrolled and is filled through a ref after mount, so no setState-in-effect and no hydration mismatch.
-  const asOfInput = useRef<HTMLInputElement>(null);
+  const asOfRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const el = asOfInput.current;
-    if (el && !el.value) el.value = new Date().toISOString().slice(0, 10);
+    const input = asOfRef.current;
+    if (input && !input.value) input.value = new Date().toISOString().slice(0, 10);
   }, []);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -48,33 +52,35 @@ export function NewRunForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4" aria-describedby="cost-note">
+    <form onSubmit={onSubmit} className="space-y-5" aria-describedby="cost-note">
       <label className="block">
-        <span className="text-sm font-medium">Company name</span>
-        <input name="company_name" required minLength={2} maxLength={120} className="mt-1 w-full rounded border px-2 py-1" />
+        <span className="text-sm font-medium text-ink">Company name</span>
+        <input name="company_name" required minLength={2} maxLength={120} className={INPUT} />
       </label>
       <label className="block">
-        <span className="text-sm font-medium">Official domain (optional)</span>
-        <input name="official_domain" placeholder="example.com" className="mt-1 w-full rounded border px-2 py-1" />
+        <span className="text-sm font-medium text-ink">Official domain (optional)</span>
+        <input name="official_domain" placeholder="example.com" className={INPUT} />
       </label>
       <label className="block">
-        <span className="text-sm font-medium">As-of date (UTC)</span>
-        <input name="as_of_date" type="date" required ref={asOfInput} className="mt-1 rounded border px-2 py-1" />
+        <span className="text-sm font-medium text-ink">As-of date (UTC)</span>
+        <input name="as_of_date" type="date" required ref={asOfRef} className={`${INPUT} sm:w-auto`} />
       </label>
-      <fieldset className="space-y-1">
-        <legend className="text-sm font-medium">Policy</legend>
-        <label className="flex gap-2"><input type="radio" name="policy" value="baseline" defaultChecked /> baseline (original output, unverified)</label>
-        <label className="flex gap-2 opacity-60"><input type="radio" name="policy" value="verify" disabled /> verify (Phase 2)</label>
-        <label className="flex gap-2 opacity-60"><input type="radio" name="policy" value="verify_and_repair" disabled /> verify_and_repair (Phase 4)</label>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium text-ink">Policy</legend>
+        <label className="flex items-center gap-2 text-sm text-ink"><input type="radio" name="policy" value="baseline" defaultChecked /> baseline (original output, unverified)</label>
+        <label className="flex items-center gap-2 text-sm text-ink-muted"><input type="radio" name="policy" value="verify" disabled /> verify (Phase 2)</label>
+        <label className="flex items-center gap-2 text-sm text-ink-muted"><input type="radio" name="policy" value="verify_and_repair" disabled /> verify_and_repair (Phase 4)</label>
       </fieldset>
-      <p id="cost-note" className="text-sm">
-        Profile <code>startup_facts_v1</code>, processor <code>base</code>. In live mode this calls Parallel and may cost money:
-        upper bound USD 0.010 per Task, run ceiling USD 5.00.
-      </p>
-      <button type="submit" disabled={pending} className="rounded bg-black px-3 py-1.5 text-white disabled:opacity-50 dark:bg-white dark:text-black">
+      <div id="cost-note">
+        <Callout tone="ochre">
+          <strong>Calls may cost money.</strong> Profile <code>startup_facts_v1</code>, processor <code>base</code>. In live mode this calls Parallel and may cost money:
+          upper bound USD 0.010 per Task, run ceiling USD 5.00.
+        </Callout>
+      </div>
+      <Button type="submit" disabled={pending}>
         {pending ? "Submitting…" : "Start run"}
-      </button>
-      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      </Button>
+      {error && <p role="alert" className="text-sm text-brick">{error}</p>}
     </form>
   );
 }
