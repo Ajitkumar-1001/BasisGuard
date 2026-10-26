@@ -14,7 +14,7 @@ export const EXPECTED_FINDINGS: string[] = [];
 
 const PATH_DIRS = ["docs/", ".claude/", ".agents/"];
 const PATH_FILE_RES = [/(^|\/)(CLAUDE|AGENTS)\.md$/i, /[\w-]*(prompt|plan)[\w-]*\.md\b/i];
-const PATH_MSG_RES = [/(^|\/)(CLAUDE|AGENTS)\.md\b/i, /[\w-]*(prompt|plan)[\w-]*\.md\b/i];
+const PATH_MSG_RES = [/\b(CLAUDE|AGENTS)\.md\b/i, /[\w-]*(prompt|plan)[\w-]*\.md\b/i];
 const NAME_RE = /\b(claude|codex|copilot|chatgpt|anthropic)\b/i;
 
 const git = (...args: string[]) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
@@ -30,7 +30,8 @@ const messages = git("log", "--format=%H%x00%B%x01", "HEAD")
   });
 
 function hasPathMarker(text: string, fileRes: RegExp[]): boolean {
-  return PATH_DIRS.some((d) => text.includes(d)) || fileRes.some((re) => re.test(text));
+  const lower = text.toLowerCase();
+  return PATH_DIRS.some((d) => lower.includes(d)) || fileRes.some((re) => re.test(text));
 }
 
 function isBinary(buf: Buffer): boolean {
