@@ -9,3 +9,5 @@ test-results/
 !.env.example
 *.tsbuildinfo
 .DS_Store
+.agents/
+.claude/
