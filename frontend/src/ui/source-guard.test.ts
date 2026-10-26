@@ -38,6 +38,26 @@ const PRIVACY_MARKER_RE = new RegExp(
   "i",
 );
 
+// README-only near-synonyms for "built/run by AI tooling" wording. Broader than PRIVACY_MARKER_RE
+// above: "automated" is legitimate product copy elsewhere in frontend/src (run-inspector.tsx and
+// claim-drawer.tsx describe "automated verdicts"/"automated outcomes"), so it can't be banned
+// repo-source-wide, but the README has no such legitimate use today.
+const AUTOMATED = ["autom", "ated"].join("");
+const AUTO_GENERATED = ["auto", "generated"].join("-");
+const MACHINE_GENERATED = ["machine", "generated"].join("-");
+const AI_WRITTEN = ["AI", "written"].join("-");
+const README_MARKER_RE = new RegExp(
+  `\\b(?:${AGENT}s?|${ASSISTANT}s?|${TOOL_BRAND_1}s?|${TOOL_BRAND_2}s?|${AI_GENERATED}s?|${AUTOMATED}|${AUTO_GENERATED}s?|${MACHINE_GENERATED}s?|${AI_WRITTEN}s?)\\b`,
+  "i",
+);
+
+// border-line (bare, not border-line-strong) is used only for decorative dividers and panel
+// edges, never for the boundary of an interactive control — inputs and the secondary button
+// border always use line-strong. See tokens.test.ts's UI_PAIRS comment for why bare `line` is
+// excluded from the WCAG 1.4.11 contrast gate instead of being asserted there.
+const BORDER_LINE_RE = /\bborder-line\b(?!-strong)/;
+const INTERACTIVE_RE = /<(?:input|button|select|textarea)\b|role="(?:button|tab)"/i;
+
 // File paths (relative to SRC_ROOT) exempted from the privacy-marker-wording rule below, each with a
 // reason. Empty: no exemption has been needed yet.
 const ALLOWLIST: string[] = [];
@@ -87,8 +107,36 @@ describe("frontend source guard", () => {
     expect(PRIVACY_MARKER_RE.test("A plain paragraph with no flagged terms.")).toBe(false);
   });
 
-  it("scans source files", () => {
-    expect(files.length).toBeGreaterThan(0);
+  it("README marker set also catches automation/AI-authorship near-synonyms PRIVACY_MARKER_RE omits", () => {
+    expect(README_MARKER_RE.test(`${AGENT}s ran this probe`)).toBe(true);
+    expect(README_MARKER_RE.test(`This project is ${AUTOMATED}`)).toBe(true);
+    expect(README_MARKER_RE.test(`${AUTO_GENERATED} documentation`)).toBe(true);
+    expect(README_MARKER_RE.test(`${MACHINE_GENERATED} documentation`)).toBe(true);
+    expect(README_MARKER_RE.test(`${AI_WRITTEN} content`)).toBe(true);
+    // "AI" alone must stay allowed: the README's own first line describes auditing "AI research
+    // answers", which is the product's subject matter, not an authorship claim.
+    expect(README_MARKER_RE.test("BasisGuard evaluates whether structured AI research answers are supported")).toBe(false);
+  });
+
+  it("scans source files, including known UI and CSS entrypoints", () => {
+    const rel = files.map((f) => f.slice(SRC_ROOT.length + 1));
+    expect(rel).toContain("ui/status.ts");
+    expect(rel).toContain("ui/button.tsx");
+    expect(rel).toContain("app/globals.css");
+    expect(files.length).toBeGreaterThanOrEqual(30);
+  });
+
+  it("border-line is never used as an interactive control's own boundary", () => {
+    const hits: string[] = [];
+    for (const file of files) {
+      if (!/\.tsx$/.test(file)) continue;
+      const rel = file.slice(SRC_ROOT.length + 1);
+      const lines = readFileSync(file, "utf8").split("\n");
+      lines.forEach((line, i) => {
+        if (BORDER_LINE_RE.test(line) && INTERACTIVE_RE.test(line)) hits.push(`${rel}:${i + 1} ${line.trim()}`);
+      });
+    }
+    expect(hits, `border-line used on an interactive element (use line-strong instead):\n${hits.join("\n")}`).toEqual([]);
   });
 
   it("contains no forbidden styling or content patterns", () => {
@@ -107,8 +155,8 @@ describe("frontend source guard", () => {
     expect(hits, `Forbidden patterns:\n${hits.join("\n")}`).toEqual([]);
   });
 
-  it("README no longer describes the Gate A probe as agent-run", () => {
+  it("README no longer describes the project or the Gate A probe as agent/automation-run", () => {
     const readme = readFileSync(REPO_README, "utf8");
-    expect(readme).not.toMatch(/Automated agents/i);
+    expect(readme).not.toMatch(README_MARKER_RE);
   });
 });
