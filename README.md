@@ -64,7 +64,7 @@ The unit and E2E suites share `basisguard_test`: run them one after the other, n
 
 ## Gate A probe (human-only, paid)
 
-`pnpm gate-a:probe` makes one real, paid Parallel call. It is intended to be run only by the project owner, deliberately, with their own key. Automated agents and CI never run it.
+`pnpm gate-a:probe` makes one real, paid Parallel call. It is intended to be run only by the project owner, deliberately, with their own key. CI and scripts never run it.
 
 ## Limitations (honest status: Phase 1)
 

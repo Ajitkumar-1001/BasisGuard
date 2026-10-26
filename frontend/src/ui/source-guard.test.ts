@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC_ROOT = resolve(__dirname, "..");
+const REPO_README = resolve(SRC_ROOT, "../../README.md");
 
 function collect(dir: string): string[] {
   const out: string[] = [];
@@ -104,5 +105,10 @@ describe("frontend source guard", () => {
       });
     }
     expect(hits, `Forbidden patterns:\n${hits.join("\n")}`).toEqual([]);
+  });
+
+  it("README no longer describes the Gate A probe as agent-run", () => {
+    const readme = readFileSync(REPO_README, "utf8");
+    expect(readme).not.toMatch(/Automated agents/i);
   });
 });
