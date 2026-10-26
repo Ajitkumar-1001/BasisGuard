@@ -22,7 +22,7 @@ export function generateStaticParams() {
 export default function EvaluationPage({ params }: PageProps<"/evaluations/[id]">) {
   return (
     <>
-      <div className="-mx-4 -mt-6 mb-6 sm:-mx-6">
+      <div className="-mx-4 mb-6 sm:-mx-6">
         <FixtureBanner />
       </div>
       <Suspense fallback={<p className="text-sm text-ink-muted">Loading evaluation…</p>}>
@@ -43,16 +43,17 @@ function MetricSection({ title, metrics }: { title: string; metrics: EvalMetric[
   return (
     <section className="mt-8">
       <h2 className="mb-3 text-base font-semibold text-ink">{title}</h2>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="flex flex-wrap gap-3">
         {metrics.map((m) => (
-          <MetricCard
-            key={m.label}
-            label={m.label}
-            value={String(m.numerator)}
-            numerator={m.numerator}
-            denominator={m.denominator}
-            footnote={`missing labels ${m.missingLabels} · errors ${m.errors} · natural ${m.natural.numerator}/${m.natural.denominator} · synthetic ${m.synthetic.numerator}/${m.synthetic.denominator}`}
-          />
+          <div key={m.label} className="min-w-0 grow basis-full sm:basis-1/2 lg:basis-1/3">
+            <MetricCard
+              label={m.label}
+              value={String(m.numerator)}
+              numerator={m.numerator}
+              denominator={m.denominator}
+              footnote={`missing labels ${m.missingLabels} · errors ${m.errors} · natural ${m.natural.numerator}/${m.natural.denominator} · synthetic ${m.synthetic.numerator}/${m.synthetic.denominator}`}
+            />
+          </div>
         ))}
       </div>
     </section>
@@ -63,7 +64,7 @@ function EvaluationBody({ view }: { view: EvaluationView }) {
   return (
     <div>
       {view.preview ? (
-        <div className="-mx-4 -mt-6 mb-6 sm:-mx-6">
+        <div className="-mx-4 mb-6 sm:-mx-6">
           <PreviewBanner />
         </div>
       ) : null}

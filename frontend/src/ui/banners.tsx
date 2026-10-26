@@ -15,7 +15,10 @@ export function PreviewBanner() {
 
 export function FixtureBanner() {
   return (
-    <div className="flex items-center gap-2 border-b border-line bg-slate-tint px-4 py-2 text-sm font-medium text-slate">
+    <div
+      role="status"
+      className="flex items-center gap-2 border-b border-line bg-slate-tint px-4 py-2 text-sm font-medium text-slate"
+    >
       <Icon name="dash" />
       Seeded fixture · synthetic example — not real Parallel output
     </div>

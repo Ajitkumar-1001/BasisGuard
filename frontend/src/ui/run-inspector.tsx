@@ -46,9 +46,9 @@ function StatStrip({ view }: { view: RunView }) {
     { label: "Latency", value: formatLatency(view.latencyMs) },
   ];
   return (
-    <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <dl className="flex flex-wrap rounded-md border border-line bg-panel">
       {stats.map((s) => (
-        <div key={s.label} className="min-w-0 rounded-md border border-line bg-panel px-4 py-3">
+        <div key={s.label} className="min-w-0 grow basis-1/2 border-r border-b border-line px-4 py-3 sm:basis-1/3">
           <dt className="text-xs font-medium text-ink-muted">{s.label}</dt>
           <dd className="num mt-1 break-words text-base text-ink">{s.value}</dd>
         </div>
@@ -376,6 +376,7 @@ export function RunInspector({ view }: { view: RunView }) {
         taskSnapshotHash={view.taskSnapshotHash}
         fixtureOrigin={view.fixtureOrigin}
         providerRunId={view.providerRunId}
+        claims={view.claims}
       />
       <StatStrip view={view} />
       {IN_PROGRESS.has(view.status) ? (

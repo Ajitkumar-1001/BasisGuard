@@ -10,7 +10,7 @@ export default async function EvaluationsPage() {
   const evaluations = await listEvaluations();
   return (
     <>
-      <div className="-mx-4 -mt-6 mb-6 sm:-mx-6">
+      <div className="-mx-4 mb-6 sm:-mx-6">
         <FixtureBanner />
       </div>
       <PageHeader title="Evaluations" />
