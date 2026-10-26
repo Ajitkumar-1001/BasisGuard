@@ -26,7 +26,7 @@ const messages = git("log", "--format=%H%x00%B%x01", "HEAD")
   .filter((s) => s.includes("\0"))
   .map((s) => {
     const [sha, body] = s.split("\0");
-    return { sha: sha.slice(0, 12), body: body ?? "" };
+    return { sha: (sha ?? "").slice(0, 12), body: body ?? "" };
   });
 
 function hasPathMarker(text: string, fileRes: RegExp[]): boolean {
