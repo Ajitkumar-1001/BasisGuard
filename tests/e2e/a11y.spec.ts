@@ -60,24 +60,27 @@ test.describe("keyboard tab order and focus visibility", () => {
           const el = document.activeElement as HTMLElement | null;
           if (!el) return null;
           const cs = getComputedStyle(el);
-          const described = `${el.tagName.toLowerCase()}${(el as HTMLInputElement).type ? `[type=${(el as HTMLInputElement).type}]` : ""}${(el as HTMLInputElement).name ? `[name=${(el as HTMLInputElement).name}]` : ""}`;
+          const type = (el as HTMLInputElement).type ?? "";
+          const described = `${el.tagName.toLowerCase()}${type ? `[type=${type}]` : ""}${(el as HTMLInputElement).name ? `[name=${(el as HTMLInputElement).name}]` : ""}`;
+          // Native multi-part widgets delegate focus to an internal shadow part in this browser:
+          // document.activeElement reports the host, but :focus-visible does not match the host
+          // itself, so our CSS outline on the host is unobservable here even though the browser
+          // paints its own native focus affordance. Narrowly scoped to these known native-widget
+          // input types only, so it can never silently exempt an ordinary link or button.
+          const NATIVE_WIDGET_TYPES = new Set(["date", "time", "datetime-local", "month", "week", "color", "range", "file", "number"]);
+          const isNativeWidget = el.tagName === "INPUT" && NATIVE_WIDGET_TYPES.has(type);
           return {
             probe: el.getAttribute("data-a11y-probe"),
             outlineStyle: cs.outlineStyle,
             outlineWidth: cs.outlineWidth,
-            focusVisible: el.matches(":focus-visible"),
+            skipOutlineCheck: isNativeWidget && !el.matches(":focus-visible"),
             described,
           };
         });
         if (!info) continue;
         if (info.probe !== null) {
           seen.add(info.probe);
-          // Native multi-part widgets (observed: input[type=date]) delegate focus to an internal
-          // shadow part in this browser: document.activeElement reports the host, but :focus-visible
-          // does not match the host itself, so our CSS outline on the host is unobservable here even
-          // though the browser paints its own native focus affordance. Reachability is still required;
-          // the outline assertion only applies where :focus-visible actually matches the host.
-          if (info.focusVisible) {
+          if (!info.skipOutlineCheck) {
             expect(info.outlineStyle, `${route}: no focus-visible outline on probe ${info.probe} (${info.described})`).not.toBe(
               "none",
             );
