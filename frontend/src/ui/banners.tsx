@@ -17,7 +17,7 @@ export function FixtureBanner() {
   return (
     <div className="flex items-center gap-2 border-b border-line bg-slate-tint px-4 py-2 text-sm font-medium text-slate">
       <Icon name="dash" />
-      Seeded example · synthetic fixture data — not real Parallel output
+      Seeded fixture · synthetic example — not real Parallel output
     </div>
   );
 }
