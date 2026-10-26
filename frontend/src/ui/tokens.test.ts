@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { extractDarkRootBlock, extractThemeBlock } from "./css-blocks";
 
 // The CSS is the single source of truth: every value below is parsed out of globals.css, never
 // copied in as a literal hex.
@@ -14,15 +15,8 @@ function extractColors(block: string): Record<string, string> {
   return out;
 }
 
-const themeBlock = css.match(/@theme\s*\{([\s\S]*?)\}/)?.[1];
-const darkBlock = css.match(
-  /@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root\s*\{([\s\S]*?)\}\s*\}/,
-)?.[1];
-if (!themeBlock) throw new Error("globals.css: no @theme block found");
-if (!darkBlock) throw new Error("globals.css: no dark @media (prefers-color-scheme) :root block found");
-
-const LIGHT = extractColors(themeBlock);
-const DARK = extractColors(darkBlock);
+const LIGHT = extractColors(extractThemeBlock(css));
+const DARK = extractColors(extractDarkRootBlock(css));
 
 function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
@@ -75,7 +69,10 @@ const TEXT_PAIRS: Pair[] = [
   ["moss", "panel"], // hash-chip "Copied" feedback
 ];
 
-// UI-component (non-text) pairs the UI relies on, needing >= 3:1.
+// UI-component (non-text) pairs the UI relies on, needing >= 3:1. `line` (bare, not `line-strong`)
+// is deliberately absent: it is a decorative divider/panel-edge token, never an interactive
+// control's own boundary, so WCAG 1.4.11 doesn't apply to it — see source-guard.test.ts's
+// "border-line is never used as an interactive control boundary" check for the enforcement.
 const UI_PAIRS: Pair[] = [
   ["line-strong", "panel"], // input border, secondary-button border
   ["petrol", "canvas"], // global :focus-visible ring
