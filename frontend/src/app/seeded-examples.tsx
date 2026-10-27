@@ -7,9 +7,9 @@ import { StatusBadge } from "@/ui/status-badge";
 export async function SeededExamples() {
   const runs = await listFixtureRuns();
   return (
-    <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <ul className="flex flex-wrap gap-3">
       {runs.map((r) => (
-        <li key={r.id} className="min-w-0 rounded-md border border-line bg-panel p-4">
+        <li key={r.id} className="min-w-0 grow basis-full rounded-md border border-line bg-panel p-4 sm:basis-1/2 lg:basis-1/3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Link className="min-w-0 break-words font-medium text-petrol underline hover:text-petrol-hover" href={`/examples/runs/${r.id}`}>
               {r.company}

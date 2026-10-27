@@ -37,7 +37,6 @@ export function ClaimsTable({
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-ink-muted">Select a row (or focus it and press Enter) to open the claim detail.</p>
       <TableScroll>
         <table className="w-full min-w-[720px] border-collapse">
           <caption className="sr-only">Claims and their automated outcomes</caption>

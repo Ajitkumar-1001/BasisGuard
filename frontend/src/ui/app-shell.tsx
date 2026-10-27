@@ -36,7 +36,22 @@ function NavFallback() {
 
 function Wordmark() {
   return (
-    <Link href="/" className="text-base font-semibold text-ink">
+    <Link href="/" className="inline-flex items-center gap-2 text-base font-semibold text-ink">
+      <svg
+        viewBox="0 0 24 24"
+        width={20}
+        height={20}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className="shrink-0 text-petrol"
+      >
+        <path d="M12 3l7 3v5c0 5-3 8.5-7 10-4-1.5-7-5-7-10V6z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
       BasisGuard
     </Link>
   );
@@ -44,14 +59,14 @@ function Wordmark() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen lg:flex">
+    <div className="min-h-screen lg:flex lg:gap-3 lg:p-3">
       <a
         href="#content"
         className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded-md focus:bg-panel focus:px-3 focus:py-2 focus:text-petrol"
       >
         Skip to content
       </a>
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-panel lg:flex">
+      <aside className="hidden w-56 shrink-0 flex-col lg:flex lg:rounded-xl lg:border lg:border-line lg:bg-panel">
         <div className="px-4 py-5">
           <Wordmark />
         </div>
@@ -61,11 +76,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Suspense>
         </nav>
         <div className="space-y-2 border-t border-line px-4 py-4 text-xs text-ink-muted">
-          <p className="font-mono">UI prototype</p>
+          <p className="font-medium text-ink">UI prototype</p>
           <p>Independent tool built on Parallel APIs — not a Parallel product</p>
         </div>
       </aside>
-      <header className="border-b border-line bg-panel px-4 py-3 sm:px-6 lg:hidden">
+      <header className="border-b border-line px-4 py-3 sm:px-6 lg:hidden">
         <Wordmark />
         <nav aria-label="Primary" className="mt-2 flex flex-wrap gap-1">
           <Suspense fallback={<NavFallback />}>
@@ -73,12 +88,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Suspense>
         </nav>
       </header>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col lg:rounded-xl lg:border lg:border-line lg:bg-panel">
         <main id="content" className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-6 sm:px-6">
           {children}
         </main>
         <footer className="border-t border-line px-4 py-3 text-xs text-ink-muted sm:px-6 lg:hidden">
-          <p className="font-mono">UI prototype</p>
+          <p className="font-medium text-ink">UI prototype</p>
           <p>Independent tool built on Parallel APIs — not a Parallel product</p>
         </footer>
       </div>

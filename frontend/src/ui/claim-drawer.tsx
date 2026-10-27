@@ -15,8 +15,8 @@ export const REPAIR_ONCE_NOTE = "Repair runs once automatically; there is no man
 
 export function UpstreamTag() {
   return (
-    <span className="rounded-[4px] border border-line px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted">
-      upstream metadata
+    <span className="rounded-[4px] border border-line px-1.5 py-0.5 text-xs font-medium text-ink-muted">
+      Upstream metadata
     </span>
   );
 }

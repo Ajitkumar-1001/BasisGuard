@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SELF = "tests/unit/privacy-scan.test.ts";
 const SKIP_FILES = new Set([SELF, "pnpm-lock.yaml"]);
-const IGNORE_DIRECTIVES = [".agents/", ".claude/"];
+const IGNORE_DIRECTIVES = [".agents/", ".claude/", ".codex/", "CLAUDE.md", "CLAUDE.local.md"];
 
 /** Findings accepted as known. A finding not listed fails; a listed item no longer found also fails. */
 export const EXPECTED_FINDINGS: string[] = [];

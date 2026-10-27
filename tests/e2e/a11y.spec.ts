@@ -6,9 +6,37 @@ import { expect, test, type Page } from "@playwright/test";
 // Source of truth: frontend/src/ui/fixtures/runs.ts (Northwind) and evaluations.ts (v3, v4-draft).
 const NORTHWIND = "6f1c2a4e-3b7d-4e19-9a52-0c8d7e41b3a1";
 const EVAL_V3 = "2c8e4f10-5d93-4b27-96a1-d07f3b8e5c42";
+const EVAL_V4_DRAFT = "9a1d6b37-8c20-4e5f-b4d8-6f3a0c7e1925";
 const UNKNOWN_ID = "00000000-0000-0000-0000-000000000000";
 
-const ROUTES = ["/", "/runs", "/runs/new", `/examples/runs/${NORTHWIND}`, "/evaluations", `/evaluations/${EVAL_V3}`];
+const ROUTES = [
+  "/",
+  "/runs",
+  "/runs/new",
+  `/examples/runs/${NORTHWIND}`,
+  "/evaluations",
+  `/evaluations/${EVAL_V3}`,
+  `/evaluations/${EVAL_V4_DRAFT}`,
+];
+
+// A fixture-mode run created once per worker through the same-origin HTTP API (mirrors
+// tests/e2e/visual.spec.ts and tests/e2e/api.spec.ts), so /runs/[id] is covered alongside the
+// statically-known routes. No worker is started: the run stays "queued", enough to render the page.
+let runRoute = "";
+test.beforeAll(async ({ request }) => {
+  const res = await request.post("/api/runs", {
+    data: {
+      request_key: crypto.randomUUID(),
+      company_name: "A11y Gate Co",
+      profile: "startup_facts_v1",
+      policy: "baseline",
+      as_of_date: "2026-10-17",
+    },
+  });
+  expect(res.status()).toBe(202);
+  const { runId } = (await res.json()) as { runId: string };
+  runRoute = `/runs/${runId}`;
+});
 
 async function open(page: Page, route: string): Promise<void> {
   const res = await page.goto(route);
@@ -16,82 +44,144 @@ async function open(page: Page, route: string): Promise<void> {
   await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
 }
 
+async function assertLandmarks(page: Page, route: string): Promise<void> {
+  await open(page, route);
+  await expect(page.locator("main#content")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Primary" }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+}
+
 test.describe("landmarks and ARIA", () => {
   for (const route of ROUTES) {
     test(`${route} has a main landmark, a labelled nav and an h1`, async ({ page }) => {
-      await open(page, route);
-      await expect(page.locator("main#content")).toBeVisible();
-      await expect(page.getByRole("navigation", { name: "Primary" }).first()).toBeVisible();
-      await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+      await assertLandmarks(page, route);
     });
   }
+  // runRoute's id isn't known until test.beforeAll runs, so it can't join the ROUTES loop above
+  // (that loop registers tests at collection time, before beforeAll executes).
+  test("live /runs/[id] has a main landmark, a labelled nav and an h1", async ({ page }) => {
+    await assertLandmarks(page, runRoute);
+  });
 });
 
-test.describe("keyboard tab order and focus visibility", () => {
-  for (const route of ROUTES) {
-    test(`${route}: Tab reaches every enabled, visible control with a visible focus indicator`, async ({ page }) => {
-      await open(page, route);
+// "/" and "/runs" render a client-fetched, DB-backed runs list. Other spec files (and this file's
+// own and visual.spec.ts's beforeAll) create rows in the same shared basisguard_test table, so
+// without pinning this response the set of focusable row links — and therefore expectedCount below
+// — would vary with execution order instead of with real UI regressions. Mirrors visual.spec.ts.
+const PINNED_RUNS_RESPONSE = {
+  runs: [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      status: "complete",
+      errorCode: null,
+      policy: "baseline",
+      companyName: "A11y Gate Fixture",
+      createdAt: "2026-01-01T00:00:00Z",
+    },
+  ],
+};
 
-      // Tag every control that should be in the native Tab sequence: visible, not disabled, and not
-      // deliberately removed from the sequence (tabIndex < 0, e.g. the unselected tabs in the
-      // roving-tabindex tablist, or focusable content inside a hidden tabpanel).
-      const expectedCount = await page.evaluate(() => {
-        const candidates = Array.from(
-          document.querySelectorAll('a[href], button, input, select, textarea, [role="tab"], [tabindex]'),
-        ) as HTMLElement[];
-        const expected = candidates.filter((el) => {
-          if ((el as HTMLButtonElement).disabled) return false;
-          if (el.tabIndex < 0) return false;
-          const rect = el.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) return false;
-          const style = getComputedStyle(el);
-          return style.visibility !== "hidden" && style.display !== "none";
-        });
-        expected.forEach((el, i) => el.setAttribute("data-a11y-probe", String(i)));
-        return expected.length;
-      });
-      expect(expectedCount, `${route}: no focusable controls found`).toBeGreaterThan(0);
+async function pinRunsList(page: Page): Promise<void> {
+  await page.route(/\/api\/runs(\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await route.fulfill({ json: PINNED_RUNS_RESPONSE });
+  });
+}
 
-      const seen = new Set<string>();
-      const maxPresses = expectedCount + 5;
-      for (let i = 0; i < maxPresses && seen.size < expectedCount; i++) {
-        await page.keyboard.press("Tab");
-        const info = await page.evaluate(() => {
-          const el = document.activeElement as HTMLElement | null;
-          if (!el) return null;
-          const cs = getComputedStyle(el);
-          const type = (el as HTMLInputElement).type ?? "";
-          const described = `${el.tagName.toLowerCase()}${type ? `[type=${type}]` : ""}${(el as HTMLInputElement).name ? `[name=${(el as HTMLInputElement).name}]` : ""}`;
-          // Native multi-part widgets delegate focus to an internal shadow part in this browser:
-          // document.activeElement reports the host, but :focus-visible does not match the host
-          // itself, so our CSS outline on the host is unobservable here even though the browser
-          // paints its own native focus affordance. Narrowly scoped to these known native-widget
-          // input types only, so it can never silently exempt an ordinary link or button.
-          const NATIVE_WIDGET_TYPES = new Set(["date", "time", "datetime-local", "month", "week", "color", "range", "file", "number"]);
-          const isNativeWidget = el.tagName === "INPUT" && NATIVE_WIDGET_TYPES.has(type);
-          return {
-            probe: el.getAttribute("data-a11y-probe"),
-            outlineStyle: cs.outlineStyle,
-            outlineWidth: cs.outlineWidth,
-            skipOutlineCheck: isNativeWidget && !el.matches(":focus-visible"),
-            described,
-          };
-        });
-        if (!info) continue;
-        if (info.probe !== null) {
-          seen.add(info.probe);
-          if (!info.skipOutlineCheck) {
-            expect(info.outlineStyle, `${route}: no focus-visible outline on probe ${info.probe} (${info.described})`).not.toBe(
-              "none",
-            );
-            expect(
-              parseFloat(info.outlineWidth),
-              `${route}: zero-width focus outline on probe ${info.probe} (${info.described})`,
-            ).toBeGreaterThan(0);
-          }
-        }
+async function assertFocusOrder(page: Page, route: string): Promise<void> {
+  await pinRunsList(page);
+  await open(page, route);
+  // RunsList fetches client-side, after open()'s h1-visible check already resolved. Without waiting
+  // for the pinned row, expectedCount below could be counted mid-fetch, undercounting the list's
+  // link — which then shows up moments later as an untagged, unreachable-by-probe element once the
+  // fetch resolves, which is exactly how this test used to fail against the shared, growing table.
+  if (route === "/" || route === "/runs") {
+    await expect(page.getByRole("link", { name: "A11y Gate Fixture" })).toBeVisible();
+  }
+
+  // Tag every control that should be in the native Tab sequence: visible, not disabled, and not
+  // deliberately removed from the sequence (tabIndex < 0, e.g. the unselected tabs in the
+  // roving-tabindex tablist, or focusable content inside a hidden tabpanel).
+  const expectedCount = await page.evaluate(() => {
+    const candidates = Array.from(
+      document.querySelectorAll('a[href], button, input, select, textarea, [role="tab"], [tabindex]'),
+    ) as HTMLElement[];
+    const expected = candidates.filter((el) => {
+      if ((el as HTMLButtonElement).disabled) return false;
+      if (el.tabIndex < 0) return false;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return false;
+      const style = getComputedStyle(el);
+      return style.visibility !== "hidden" && style.display !== "none";
+    });
+    expected.forEach((el, i) => el.setAttribute("data-a11y-probe", String(i)));
+    return expected.length;
+  });
+  expect(expectedCount, `${route}: no focusable controls found`).toBeGreaterThan(0);
+
+  const seen = new Set<string>();
+  const maxPresses = expectedCount + 5;
+  for (let i = 0; i < maxPresses && seen.size < expectedCount; i++) {
+    await page.keyboard.press("Tab");
+    const info = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      const type = (el as HTMLInputElement).type ?? "";
+      const described = `${el.tagName.toLowerCase()}${type ? `[type=${type}]` : ""}${(el as HTMLInputElement).name ? `[name=${(el as HTMLInputElement).name}]` : ""}`;
+      // Native multi-part widgets delegate focus to an internal shadow part in this browser:
+      // document.activeElement reports the host, but :focus-visible does not match the host
+      // itself, so our CSS outline on the host is unobservable here even though the browser
+      // paints its own native focus affordance. Narrowly scoped to these known native-widget
+      // input types only, so it can never silently exempt an ordinary link or button. This holds
+      // under both color schemes: the mechanism is about shadow-part focus delegation, not color.
+      const NATIVE_WIDGET_TYPES = new Set(["date", "time", "datetime-local", "month", "week", "color", "range", "file", "number"]);
+      const isNativeWidget = el.tagName === "INPUT" && NATIVE_WIDGET_TYPES.has(type);
+      return {
+        probe: el.getAttribute("data-a11y-probe"),
+        outlineStyle: cs.outlineStyle,
+        outlineWidth: cs.outlineWidth,
+        skipOutlineCheck: isNativeWidget && !el.matches(":focus-visible"),
+        described,
+      };
+    });
+    if (!info) continue;
+    if (info.probe !== null) {
+      seen.add(info.probe);
+      if (!info.skipOutlineCheck) {
+        expect(info.outlineStyle, `${route}: no focus-visible outline on probe ${info.probe} (${info.described})`).not.toBe(
+          "none",
+        );
+        expect(
+          parseFloat(info.outlineWidth),
+          `${route}: zero-width focus outline on probe ${info.probe} (${info.described})`,
+        ).toBeGreaterThan(0);
       }
-      expect(seen.size, `${route}: reached ${seen.size}/${expectedCount} focusable controls by Tab`).toBe(expectedCount);
+    }
+  }
+  expect(seen.size, `${route}: reached ${seen.size}/${expectedCount} focusable controls by Tab`).toBe(expectedCount);
+}
+
+test.describe("keyboard tab order and focus visibility", () => {
+  const THEMES = ["light", "dark"] as const;
+  // The global focus ring's color (--color-petrol) changes under dark, so this is the one a11y
+  // check in this file actually sensitive to color scheme; landmarks/ARIA roles above and the
+  // state-rendering checks below don't vary with it, so they aren't run per-theme.
+  for (const theme of THEMES) {
+    test.describe(`${theme} theme`, () => {
+      test.use({ colorScheme: theme });
+      for (const route of ROUTES) {
+        test(`${route}: Tab reaches every enabled, visible control with a visible focus indicator`, async ({ page }) => {
+          await assertFocusOrder(page, route);
+        });
+      }
+      // See the landmarks describe above for why the live route needs its own test instead of
+      // joining the ROUTES loop.
+      test("live /runs/[id]: Tab reaches every enabled, visible control with a visible focus indicator", async ({
+        page,
+      }) => {
+        await assertFocusOrder(page, runRoute);
+      });
     });
   }
 });

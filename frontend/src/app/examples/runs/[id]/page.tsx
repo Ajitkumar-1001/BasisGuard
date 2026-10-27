@@ -14,7 +14,7 @@ export function generateStaticParams() {
 export default function ExampleRunPage({ params }: PageProps<"/examples/runs/[id]">) {
   return (
     <>
-      <div className="-mx-4 -mt-6 mb-6 sm:-mx-6">
+      <div className="-mx-4 mb-6 sm:-mx-6">
         <FixtureBanner />
       </div>
       <Suspense fallback={<p className="text-sm text-ink-muted">Loading seeded example…</p>}>

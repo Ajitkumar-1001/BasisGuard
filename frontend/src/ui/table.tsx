@@ -20,7 +20,7 @@ export function Th({
   return (
     <th
       scope="col"
-      className={`sticky top-0 z-10 bg-sunken px-3 py-2 text-[11px] font-medium uppercase tracking-[0.04em] text-ink-muted ${numeric ? "text-right" : "text-left"}${className ? ` ${className}` : ""}`}
+      className={`sticky top-0 z-10 border-b border-line-strong bg-panel px-3 py-2 text-xs font-medium text-ink-muted ${numeric ? "text-right" : "text-left"}${className ? ` ${className}` : ""}`}
       {...rest}
     />
   );
